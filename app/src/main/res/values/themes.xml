@@ -1,0 +1,25 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Theme.GlyphAnki" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="android:windowBackground">@color/nothing_bg</item>
+        <item name="android:statusBarColor">@color/nothing_bg</item>
+        <item name="android:navigationBarColor">@color/nothing_bg</item>
+        <item name="android:fontFamily">sans-serif-thin</item>
+        <item name="android:textColor">@color/nothing_fg</item>
+        <item name="colorPrimary">@color/nothing_fg</item>
+        <item name="colorOnPrimary">@color/nothing_bg</item>
+        <item name="colorSecondary">@color/nothing_border</item>
+    </style>
+
+    <style name="Glyph.Button" parent="Widget.Material3.Button">
+        <item name="android:textColor">@color/nothing_fg</item>
+        <item name="android:fontFamily">sans-serif-thin</item>
+        <item name="backgroundTint">@color/nothing_card</item>
+        <item name="android:letterSpacing">0.06</item>
+    </style>
+
+    <style name="Glyph.Text.DarkDim" parent="TextAppearance.Material3.BodyMedium">
+        <item name="android:textColor">@color/nothing_fg_dim</item>
+        <item name="android:fontFamily">sans-serif-thin</item>
+    </style>
+</resources>

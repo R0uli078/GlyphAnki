@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:minHeight="44dp"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:paddingLeft="8dp"
+    android:paddingRight="4dp"
+    android:background="@android:color/transparent">
+
+    <TextView
+        android:id="@+id/fieldName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:textColor="#FFFFFF"
+        android:textSize="13sp"
+        android:includeFontPadding="false"/>
+
+    <ImageButton
+        android:id="@+id/btnUp"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:background="@android:color/transparent"
+        android:padding="2dp"
+        android:tint="#0DFFFFFF"
+        android:src="@drawable/ic_chevron_up"
+        android:contentDescription="Move up"/>
+
+    <ImageButton
+        android:id="@+id/btnDown"
+        android:layout_width="20dp"
+        android:layout_height="20dp"
+        android:background="@android:color/transparent"
+        android:padding="2dp"
+        android:tint="#0DFFFFFF"
+        android:src="@drawable/ic_chevron_down"
+        android:contentDescription="Move down"/>
+
+    <ImageButton
+        android:id="@+id/btnDelete"
+        android:layout_width="18dp"
+        android:layout_height="18dp"
+        android:background="@android:color/transparent"
+        android:padding="2dp"
+        android:tint="#14FFFFFF"
+        android:src="@drawable/ic_trash"
+        android:contentDescription="Delete"/>
+</LinearLayout>

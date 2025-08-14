@@ -1,0 +1,402 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/nothing_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingLeft="16dp"
+        android:paddingRight="16dp"
+        android:paddingBottom="16dp"
+        android:paddingTop="52dp">
+
+        <TextView
+            android:id="@+id/settingsTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Settings"
+            android:textColor="@color/nothing_fg"
+            android:textSize="24sp"
+            android:paddingBottom="12dp"/>
+
+        <!-- Card: Text settings (Front & Back in one block) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:layout_marginTop="8dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="TEXT"
+                android:textColor="@color/nothing_fg"
+                android:textSize="15sp"/>
+
+            <!-- Front Row -->
+            <TextView
+                android:id="@+id/labelFront"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Front Text Fields"
+                android:textColor="@color/nothing_fg_dim"
+                android:textSize="13sp"
+                android:layout_marginTop="6dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp">
+                <EditText
+                    android:id="@+id/frontInput"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:hint="field name"
+                    android:textColor="@color/nothing_fg"
+                    android:textColorHint="@color/nothing_fg_dim"
+                    android:textSize="13sp"
+                    android:backgroundTint="#333333"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"/>
+                <Button
+                    android:id="@+id/addFront"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="84dp"
+                    android:text="ADD"
+                    android:textAllCaps="true"
+                    android:textSize="13sp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/btn_capsule"
+                    android:textColor="@color/nothing_fg"/>
+            </LinearLayout>
+
+            <ListView
+                android:id="@+id/frontList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:overScrollMode="never"
+                android:nestedScrollingEnabled="false"
+                android:divider="@color/nothing_border"
+                android:dividerHeight="1dp"
+                android:layout_marginTop="4dp"
+                android:paddingBottom="4dp"/>
+
+            <!-- Back Row -->
+            <TextView
+                android:id="@+id/labelBack"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Back Text Fields"
+                android:textColor="@color/nothing_fg_dim"
+                android:textSize="13sp"
+                android:layout_marginTop="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:layout_marginTop="4dp">
+                <EditText
+                    android:id="@+id/backInput"
+                    android:layout_width="0dp"
+                    android:layout_height="40dp"
+                    android:layout_weight="1"
+                    android:hint="field name"
+                    android:textColor="@color/nothing_fg"
+                    android:textColorHint="@color/nothing_fg_dim"
+                    android:textSize="13sp"
+                    android:backgroundTint="#333333"
+                    android:paddingLeft="12dp"
+                    android:paddingRight="12dp"/>
+                <Button
+                    android:id="@+id/addBack"
+                    android:layout_width="wrap_content"
+                    android:layout_height="40dp"
+                    android:minWidth="84dp"
+                    android:text="ADD"
+                    android:textAllCaps="true"
+                    android:textSize="13sp"
+                    android:layout_marginStart="8dp"
+                    android:background="@drawable/btn_capsule"
+                    android:textColor="@color/nothing_fg"/>
+            </LinearLayout>
+
+            <ListView
+                android:id="@+id/backList"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:overScrollMode="never"
+                android:nestedScrollingEnabled="false"
+                android:divider="@color/nothing_border"
+                android:dividerHeight="1dp"
+                android:layout_marginTop="4dp"/>
+        </LinearLayout>
+
+        <!-- Card: Audio settings (moved after Text) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal"
+                android:gravity="center_vertical">
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="AUDIO"
+                    android:textColor="@color/nothing_fg"
+                    android:textSize="15sp"/>
+                <Switch
+                    android:id="@+id/toggleAudio"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:thumbTint="@color/nothing_red"
+                    android:trackTint="#F44336"/>
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/audioSection"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone"
+                android:layout_marginTop="8dp">
+
+                <TextView
+                    android:id="@+id/labelFrontAudio"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Front Audio Fields"
+                    android:textColor="@color/nothing_fg_dim"
+                    android:textSize="13sp"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+                    <EditText
+                        android:id="@+id/frontAudioInput"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:hint="field name"
+                        android:textColor="@color/nothing_fg"
+                        android:textColorHint="@color/nothing_fg_dim"
+                        android:textSize="13sp"
+                        android:backgroundTint="#333333"
+                        android:paddingLeft="10dp"
+                        android:paddingRight="10dp"/>
+                    <Button
+                        android:id="@+id/addFrontAudio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:minWidth="84dp"
+                        android:text="ADD"
+                        android:textAllCaps="true"
+                        android:textSize="12sp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/btn_capsule"
+                        android:textColor="@color/nothing_fg"/>
+                </LinearLayout>
+
+                <ListView
+                    android:id="@+id/frontAudioList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:overScrollMode="never"
+                    android:nestedScrollingEnabled="false"
+                    android:divider="@color/nothing_border"
+                    android:dividerHeight="1dp"
+                    android:layout_marginTop="4dp"/>
+
+                <TextView
+                    android:id="@+id/labelBackAudio"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Back Audio Fields"
+                    android:textColor="@color/nothing_fg_dim"
+                    android:textSize="13sp"
+                    android:layout_marginTop="8dp"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginTop="4dp">
+                    <EditText
+                        android:id="@+id/backAudioInput"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:hint="field name"
+                        android:textColor="@color/nothing_fg"
+                        android:textColorHint="@color/nothing_fg_dim"
+                        android:textSize="13sp"
+                        android:backgroundTint="#333333"
+                        android:paddingLeft="10dp"
+                        android:paddingRight="10dp"/>
+                    <Button
+                        android:id="@+id/addBackAudio"
+                        android:layout_width="wrap_content"
+                        android:layout_height="36dp"
+                        android:minWidth="84dp"
+                        android:text="ADD"
+                        android:textAllCaps="true"
+                        android:textSize="12sp"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/btn_capsule"
+                        android:textColor="@color/nothing_fg"/>
+                </LinearLayout>
+
+                <ListView
+                    android:id="@+id/backAudioList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:overScrollMode="never"
+                    android:nestedScrollingEnabled="false"
+                    android:divider="@color/nothing_border"
+                    android:dividerHeight="1dp"
+                    android:layout_marginTop="4dp"/>
+
+                <TextView
+                    android:id="@+id/safStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="SAF: not configured"
+                    android:textColor="@color/caption_gray"
+                    android:textSize="12sp"
+                    android:layout_marginTop="8dp"/>
+
+                <Button
+                    android:id="@+id/btnPickMediaFolder"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minWidth="180dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:text="Grant media folder"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/btn_capsule"
+                    android:textColor="@color/nothing_fg"/>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Card: Controls (formerly Accessibility) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="CONTROLS"
+                android:textColor="@color/nothing_fg"
+                android:textSize="15sp"/>
+
+            <TextView
+                android:id="@+id/accessibilityStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Volume Shortcut: not configured"
+                android:textColor="@color/caption_gray"
+                android:textSize="12sp"
+                android:layout_marginTop="8dp"/>
+
+            <Button
+                android:id="@+id/btnEnableAccessibility"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:minWidth="180dp"
+                android:paddingLeft="16dp"
+                android:paddingRight="16dp"
+                android:text="Enable Accessibility"
+                android:textAllCaps="false"
+                android:textSize="12sp"
+                android:layout_marginTop="6dp"
+                android:background="@drawable/btn_capsule"
+                android:textColor="@color/nothing_fg"/>
+        </LinearLayout>
+
+        <!-- Card: AnkiDroid API permission -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card"
+            android:orientation="vertical"
+            android:layout_marginTop="12dp">
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="ANKIDROID"
+                android:textColor="@color/nothing_fg"
+                android:textSize="15sp"/>
+
+            <TextView
+                android:id="@+id/ankiApiStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AnkiDroid API: not configured"
+                android:textColor="@color/caption_gray"
+                android:textSize="12sp"
+                android:layout_marginTop="8dp"/>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:gravity="center_vertical"
+                android:layout_marginTop="6dp">
+
+                <Button
+                    android:id="@+id/btnGrantAnkiApi"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minWidth="180dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:includeFontPadding="false"
+                    android:text="Grant AnkiDroid API"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:background="@drawable/btn_capsule_red"
+                    android:textColor="@color/nothing_fg"/>
+
+                <Button
+                    android:id="@+id/btnOpenAnki"
+                    android:layout_width="wrap_content"
+                    android:layout_height="36dp"
+                    android:minWidth="180dp"
+                    android:paddingLeft="16dp"
+                    android:paddingRight="16dp"
+                    android:includeFontPadding="false"
+                    android:text="Open AnkiDroid"
+                    android:textAllCaps="false"
+                    android:textSize="12sp"
+                    android:layout_marginTop="6dp"
+                    android:background="@drawable/btn_capsule_red"
+                    android:textColor="@color/nothing_fg"/>
+            </LinearLayout>
+        </LinearLayout>
+
+    </LinearLayout>
+</ScrollView>

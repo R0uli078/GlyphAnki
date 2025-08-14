@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    <color name="nothing_bg">#000000</color>
+    <color name="nothing_card">#111111</color>
+    <color name="nothing_border">#222222</color>
+    <color name="nothing_fg">#FFFFFF</color>
+    <color name="nothing_fg_dim">#AAAAAA</color>
+    <color name="nothing_red">#FF3B30</color>
+    <!-- Card surface colors (may be overridden by Nothing palette) -->
+    <color name="card_bg">#1AFFFFFF</color>
+    <color name="card_border">#333333</color>
+    <color name="success_green">#2ECC71</color>
+    <color name="caption_gray">#CCCCCC</color>
+
+    <!-- Primary is red (Nothing style) -->
+    <color name="nothing_red_pressed">#E2332A</color>
+</resources>
