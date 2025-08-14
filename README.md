@@ -18,7 +18,6 @@
 
 ## 🚀 Features  
 
-- 📂 **Hands-free review** using your phone’s GlyphMatrix  
 - 🔼 **Volume buttons navigation**  
 - 💬 **Custom text display** on the Glyph  
 - 🎧 **Audio playback** for your cards (optional)  
