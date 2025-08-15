@@ -12,7 +12,8 @@
 
 ## 📸 Preview  
 
-> *Coming*
+> ![24575](https://github.com/user-attachments/assets/fd5276a3-36fc-4c43-b89e-3ae0aa1099b2)
+
 
 ---
 
@@ -20,8 +21,9 @@
 
 - 🔼 **Volume buttons navigation**  
 - 💬 **Custom text display** on the Glyph  
-- 🎧 **Audio playback** for your cards (optional)  
-- ⚡ **Quick setup** — ready in minutes  
+- 🎧 **Audio playback** for your cards (optional)
+- 📝 **HtmlParser** for full support of HTML cards
+- ⚡ **Quick setup** — ready in minutes
 
 ---
 
