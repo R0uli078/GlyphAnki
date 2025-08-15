@@ -152,6 +152,8 @@ class GlyphController(private val context: Context) {
         Log.d(TAG, "displayText: '${text}'")
         // no toast
         ensureReady { glyphManager ->
+            // Stop any ongoing scrolling so custom text isn't overwritten
+            stopScrolling()
             clearDisplay()
             displayTextAction(glyphManager, text)
         }
@@ -225,6 +227,7 @@ class GlyphController(private val context: Context) {
     fun displayTextAsBitmap(text: String) {
         Log.d(TAG, "displayTextAsBitmap: len=${text.length}")
         ensureReady { glyphManager ->
+            // Stop any ongoing scrolling so custom text isn't overwritten
             stopScrolling()
             clearDisplay()
             renderTextToBitmap(glyphManager, text)
