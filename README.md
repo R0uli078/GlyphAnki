@@ -12,7 +12,8 @@
 
 ## 📸 Preview  
 
-> *Coming*
+> ![24575](https://github.com/user-attachments/assets/fd5276a3-36fc-4c43-b89e-3ae0aa1099b2)
+
 
 ---
 
@@ -20,8 +21,9 @@
 
 - 🔼 **Volume buttons navigation**  
 - 💬 **Custom text display** on the Glyph  
-- 🎧 **Audio playback** for your cards (optional)  
-- ⚡ **Quick setup** — ready in minutes  
+- 🎧 **Audio playback** for your cards (optional)
+- 📝 **HtmlParser** for full support of HTML cards
+- ⚡ **Quick setup** — ready in minutes
 
 ---
 
@@ -52,7 +54,7 @@
 ## 📝 Notes  
 
 - 💤 First-time Glyph display may be tricky — if it doesn’t work, **lock and delock your screen** or **cycle through your Glyph Toys** to “wake” it up.  
-- 💥 AnkiDroid may occasionally crash — if it happens, **switch to another deck**, then go back to the original.  
+- 💥 AnkiDroid may occasionally crash — if it happens, do the **first card** of your deck in AnkiDroid, then go back to GlyphAnki or switch to another deck.
 - 📱 GlyphAnki is designed for the new **Nothing Phone (3)** Matrix Glyph.
 - 🔠 The current display size is quite small (3 Sino-Japanese characters fit on the Glyph; beyond that, the text scrolls). I’ll try to add the option to freely increase the font size in future updates.
 
