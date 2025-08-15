@@ -23,6 +23,8 @@ class ReviewForegroundService : Service() {
 
     companion object {
         private const val TAG = "ReviewForegroundService"
+        // Avoid immediately repeating the same card; block window in ms (session-local)
+        private const val SAME_CARD_BLOCK_MS = 15_000L
         // Broadcast actions for UI messages
         const val BROADCAST_ACTION = "com.alcyon.glyphanki.REVIEW_STATUS"
         const val EXTRA_STATUS = "status"
@@ -77,6 +79,9 @@ class ReviewForegroundService : Service() {
     var reviewEngine: ReviewEngine? = null
         private set
 
+    // Periodic lightweight refresh to keep AnkiDroid scheduler/counts up-to-date during a session
+    private var refreshTickerJob: Job? = null
+
     override fun onCreate() {
         super.onCreate()
         ankiRepository = AnkiRepository(this)
@@ -118,10 +123,10 @@ class ReviewForegroundService : Service() {
             return START_NOT_STICKY
         }
 
-        // If a session is already active and for the same deck, ignore duplicate start
+        // If a session is already active and for the same deck, restart it instead of ignoring
         if (reviewEngine != null && ReviewSessionState.active && ReviewSessionState.currentDeckId == deckId) {
-            Log.w(TAG, "Session already active for deck=$deckId. Ignoring duplicate start.")
-            return START_STICKY
+            Log.w(TAG, "Session already active for deck=$deckId. Restarting session.")
+            stopCurrentSession("Restart same deck")
         }
         // If a different session is active, stop it first
         if (reviewEngine != null) {
@@ -159,6 +164,9 @@ class ReviewForegroundService : Service() {
         } catch (_: Throwable) {
         } finally {
             reviewEngine = null
+            // Stop periodic refresh ticker
+            try { refreshTickerJob?.cancel() } catch (_: Throwable) {}
+            refreshTickerJob = null
             serviceScope.cancel()
             serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
             ReviewSessionState.clear()
@@ -179,9 +187,40 @@ class ReviewForegroundService : Service() {
             Log.d(TAG, "Starting review session for deck $deckId")
 
             withContext(Dispatchers.IO) {
+                // Strong reset of provider caches without sleeps
+                ankiRepository.hardInvalidateProviderCaches(deckId)
+                // Ensure selected deck is the target deck (provider switches back afterward if needed)
+                runCatching { ankiRepository.selectDeck(deckId) }.onFailure { Log.w(TAG, "selectDeck failed", it) }
                 ankiRepository.forceSyncRefresh()
+                ankiRepository.preWarmDeckTop(deckId)
+                // New: pre-fetch small queue to fully wake up provider for this deck
+                runCatching { ankiRepository.peekQueue(deckId, limit = 3) }.onFailure { Log.w(TAG, "peekQueue warmup failed", it) }
+                try {
+                    contentResolver.query(
+                        com.ichi2.anki.FlashCardsContract.Deck.CONTENT_ALL_URI,
+                        arrayOf(com.ichi2.anki.FlashCardsContract.Deck.DECK_ID),
+                        null, null, null
+                    )?.use { }
+                } catch (_: Exception) { }
             }
             Log.d(TAG, "Provider refresh done in ${System.currentTimeMillis() - tStart}ms")
+
+            // Start/Restart a lightweight periodic refresh while the session is active
+            refreshTickerJob?.cancel()
+            refreshTickerJob = serviceScope.launch(Dispatchers.IO) {
+                var tick = 0
+                while (isActive) {
+                    // Keep deck context and trigger minimal recompute
+                    runCatching { ankiRepository.selectDeck(deckId) }
+                    runCatching { ankiRepository.peekQueue(deckId, limit = 1) }
+                    // Occasionally trigger a full refresh to keep reviewCount accurate
+                    if (tick % 5 == 0) {
+                        runCatching { ankiRepository.forceSyncRefresh() }
+                    }
+                    tick++
+                    delay(2000)
+                }
+            }
             
             val fieldPrefs = FieldPreferences(this@ReviewForegroundService)
             val ffName = frontFieldName ?: "Front"
@@ -192,7 +231,7 @@ class ReviewForegroundService : Service() {
             val audioBack = fieldPrefs.getBackAudioFields()
 
             // Probe a first card (IO)
-            val initial = withContext(Dispatchers.IO) {
+            var initial = withContext(Dispatchers.IO) {
                 ankiRepository.loadReviewCards(
                     deckId = deckId,
                     max = 1,
@@ -205,6 +244,23 @@ class ReviewForegroundService : Service() {
                 )
             }
             Log.d(TAG, "Initial load size=${initial.size} after ${System.currentTimeMillis() - tStart}ms")
+            // If we got a malformed first card (empty front/back), perform a second refresh and retry once
+            if (initial.isNotEmpty() && (initial[0].frontHtml.isBlank() && initial[0].backHtml.isBlank())) {
+                withContext(Dispatchers.IO) { ankiRepository.forceSyncRefresh() }
+                initial = withContext(Dispatchers.IO) {
+                    ankiRepository.loadReviewCards(
+                        deckId = deckId,
+                        max = 1,
+                        frontFieldName = ffName,
+                        backFieldName = bfName,
+                        frontFallbacks = ffFallbacks,
+                        backFallbacks = bfFallbacks,
+                        frontAudioFields = audioFront,
+                        backAudioFields = audioBack
+                    )
+                }
+                Log.d(TAG, "Retry after refresh, size=${initial.size}")
+            }
             if (initial.isEmpty()) {
                 val msg = "No cards available for review"
                 Log.w(TAG, msg)
@@ -215,26 +271,154 @@ class ReviewForegroundService : Service() {
 
             reviewEngine = ReviewEngine(this@ReviewForegroundService)
 
-            val ready = reviewEngine!!.waitGlyphReady(1800)
+            val ready = reviewEngine!!.waitGlyphReady(1200)
             Log.d(TAG, "Glyph ready before first frame: $ready")
             reviewEngine!!.warmUpGlyph()
-            delay(120)
+
+            // Conflict handling flags shared between loader and answerer
+            var needRefresh = false
+            var lastFailedId: Long? = null
+            var lastGradedId: Long? = null
+            var lastShownId: Long? = null
+            var lastGradeAtMs: Long = 0L
+            // Blocklist for sids that should not be immediately repeated (sid = noteId<<8 | ord)
+            val blockedUntil: MutableMap<Long, Long> = mutableMapOf()
+            // Recent history (count-based, not time-based) to avoid ping-pong between 2 cards
+            val recentSids: ArrayDeque<Long> = ArrayDeque()
+            fun rememberSid(sid: Long) {
+                recentSids.addLast(sid)
+                while (recentSids.size > 8) recentSids.removeFirst()
+            }
+            // Keep track of all sids graded in this session; we avoid resurfacing them
+            val gradedSids: MutableSet<Long> = LinkedHashSet()
+            // Track consecutive empties to decide when deck is finished
+            var consecutiveEmptyFetches = 0
 
             val smartLoader: suspend () -> AnkiCard? = {
                 val t0 = System.currentTimeMillis()
                 withContext(Dispatchers.IO) {
-                    val fresh = ankiRepository.loadReviewCards(
-                        deckId = deckId,
-                        max = 1,
-                        frontFieldName = ffName,
-                        backFieldName = bfName,
-                        frontFallbacks = ffFallbacks,
-                        backFallbacks = bfFallbacks,
-                        frontAudioFields = audioFront,
-                        backAudioFields = audioBack
-                    )
-                    Log.d(TAG, "smartLoader: fetched=${fresh.size} in ${System.currentTimeMillis() - t0}ms")
-                    fresh.firstOrNull()
+                    if (needRefresh) {
+                        Log.d(TAG, "smartLoader: needRefresh=true, HARD invalidation + refresh before load")
+                        ankiRepository.hardInvalidateProviderCaches(deckId)
+                        runCatching { ankiRepository.selectDeck(deckId) }.onFailure { }
+                        ankiRepository.forceSyncRefresh()
+                        runCatching { ankiRepository.peekQueue(deckId, limit = 10) }.onFailure { }
+                        needRefresh = false
+                    }
+
+                    var attempt = 0
+                    var picked: AnkiCard? = null
+                    var lastBatchSize = 0
+                    while (attempt < 3 && picked == null) {
+                        val limit = when (attempt) {
+                            0 -> 50
+                            1 -> 75
+                            else -> 100
+                        }
+                        var batch = ankiRepository.loadReviewCards(
+                            deckId = deckId,
+                            max = limit,
+                            frontFieldName = ffName,
+                            backFieldName = bfName,
+                            frontFallbacks = ffFallbacks,
+                            backFallbacks = bfFallbacks,
+                            frontAudioFields = audioFront,
+                            backAudioFields = audioBack
+                        )
+                        // Filter out any non-gradeable items (shouldn’t happen anymore, but be safe)
+                        if (batch.isNotEmpty()) batch = batch.filter { it.gradeable }
+                        lastBatchSize = batch.size
+
+                        if (batch.isEmpty() && attempt == 0) {
+                            Log.d(TAG, "smartLoader: empty batch -> force refresh path")
+                            ankiRepository.hardInvalidateProviderCaches(deckId)
+                            runCatching { ankiRepository.selectDeck(deckId) }
+                            ankiRepository.forceSyncRefresh()
+                            runCatching { ankiRepository.peekQueue(deckId, limit = 10) }
+                            batch = ankiRepository.loadReviewCards(
+                                deckId = deckId,
+                                max = limit,
+                                frontFieldName = ffName,
+                                backFieldName = bfName,
+                                frontFallbacks = ffFallbacks,
+                                backFallbacks = bfFallbacks,
+                                frontAudioFields = audioFront,
+                                backAudioFields = audioBack
+                            ).filter { it.gradeable }
+                            lastBatchSize = batch.size
+                        }
+
+                        val topSid = batch.firstOrNull()?.let { (it.noteId shl 8) or (it.cardOrd.toLong() and 0xFF) }
+                        if (lastGradedId != null && topSid == lastGradedId) {
+                            Log.d(TAG, "smartLoader: top==lastGraded; forcing hard invalidation and refetch")
+                            ankiRepository.hardInvalidateProviderCaches(deckId)
+                            runCatching { ankiRepository.selectDeck(deckId) }.onFailure { }
+                            ankiRepository.forceSyncRefresh()
+                            batch = ankiRepository.loadReviewCards(
+                                deckId = deckId,
+                                max = limit,
+                                frontFieldName = ffName,
+                                backFieldName = bfName,
+                                frontFallbacks = ffFallbacks,
+                                backFallbacks = bfFallbacks,
+                                frontAudioFields = audioFront,
+                                backAudioFields = audioBack
+                            ).filter { it.gradeable }
+                            lastBatchSize = batch.size
+                        }
+
+                        val avoidSet = HashSet<Long>().apply {
+                            lastFailedId?.let { add(it) }
+                            lastShownId?.let { add(it) }
+                            lastGradedId?.let { add(it) }
+                            addAll(recentSids)
+                            addAll(gradedSids)
+                        }
+                        val firstDifferent = batch.firstOrNull {
+                            val sid = (it.noteId shl 8) or (it.cardOrd.toLong() and 0xFF)
+                            !avoidSet.contains(sid)
+                        }
+                        picked = firstDifferent ?: batch.firstOrNull { card ->
+                            val sid = (card.noteId shl 8) or (card.cardOrd.toLong() and 0xFF)
+                            !gradedSids.contains(sid)
+                        } ?: batch.getOrNull(1) ?: batch.firstOrNull()
+
+                        Log.d(TAG, "smartLoader: fetched=${batch.size} limit=$limit attempt=$attempt picked=${picked?.noteId}:${picked?.cardOrd} avoidRecent=${recentSids.size} graded=${gradedSids.size}")
+
+                        if (picked != null) {
+                            val sid = (picked!!.noteId shl 8) or (picked!!.cardOrd.toLong() and 0xFF)
+                            if (attempt == 0 && avoidSet.contains(sid)) {
+                                Log.d(TAG, "smartLoader: picked avoided sid, hard invalidation + retry wider")
+                                ankiRepository.hardInvalidateProviderCaches(deckId)
+                                runCatching { ankiRepository.selectDeck(deckId) }.onFailure { }
+                                ankiRepository.forceSyncRefresh()
+                                picked = null
+                            }
+                        }
+                        attempt++
+                    }
+
+                    if (picked == null && lastBatchSize == 0) {
+                        consecutiveEmptyFetches++
+                        Log.d(TAG, "smartLoader: consecutiveEmptyFetches=$consecutiveEmptyFetches")
+                        runCatching { ankiRepository.selectDeck(deckId) }
+                        runCatching { ankiRepository.peekQueue(deckId, limit = 1) }
+                    } else if (picked != null) {
+                        consecutiveEmptyFetches = 0
+                    }
+
+                    picked?.let { card ->
+                        val sid = (card.noteId shl 8) or (card.cardOrd.toLong() and 0xFF)
+                        lastShownId = sid
+                        rememberSid(sid)
+                    }
+                    Log.d(TAG, "smartLoader: final picked=${picked?.noteId}:${picked?.cardOrd} in ${System.currentTimeMillis() - t0}ms")
+
+                    // If we have no card twice in a row, consider deck finished for now (Engine will show End)
+                    if (picked == null && consecutiveEmptyFetches >= 2) {
+                        Log.d(TAG, "smartLoader: no cards twice -> signaling end of deck")
+                    }
+                    picked
                 }
             }
 
@@ -243,6 +427,21 @@ class ReviewForegroundService : Service() {
                 withContext(Dispatchers.IO) {
                     val ok = ankiRepository.answerCard(card.noteId, card.cardOrd, ease, timeTaken)
                     Log.d(TAG, "answerFunction: ok=$ok for ${card.noteId}:${card.cardOrd} ease=$ease t=$timeTaken in ${System.currentTimeMillis() - t0}ms")
+                    // Always trigger a strong invalidation so next fetch sees the scheduler advance
+                    needRefresh = true
+                    val sid = (card.noteId shl 8) or (card.cardOrd.toLong() and 0xFF)
+                    if (ok) {
+                        lastGradedId = sid
+                        lastGradeAtMs = System.currentTimeMillis()
+                        gradedSids.add(sid)
+                        // Force a deck-select + refresh and schedule query after a successful answer
+                        runCatching { ankiRepository.selectDeck(deckId) }
+                        runCatching { ankiRepository.hardInvalidateProviderCaches(deckId) }
+                        runCatching { ankiRepository.forceSyncRefresh() }
+                        runCatching { ankiRepository.peekQueue(deckId, limit = 10) }
+                    } else {
+                        lastFailedId = sid
+                    }
                     ok
                 }
             }

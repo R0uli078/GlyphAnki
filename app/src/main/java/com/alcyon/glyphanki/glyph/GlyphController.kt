@@ -253,7 +253,7 @@ class GlyphController(private val context: Context) {
                     Log.d(TAG, "displaySmart(ascii, static) frame set")
                 } else {
                     Log.d(TAG, "displaySmart(ascii) -> scrolling, width=${off.contentWidth}")
-                    displayScrollingBitmap(off.bitmap, speedMs = 28L, loop = true)
+                    displayScrollingBitmap(off.bitmap, speedMs = 24L, loop = true) // requested 24 ms/pixel
                 }
             }
             return
@@ -287,7 +287,7 @@ class GlyphController(private val context: Context) {
                 Log.d(TAG, "displaySmart(mixed, static) frame set")
             } else {
                 Log.d(TAG, "displaySmart(mixed) -> scrolling, width=${off.contentWidth}")
-                displayScrollingBitmap(off.bitmap, speedMs = 42L, loop = true)
+                displayScrollingBitmap(off.bitmap, speedMs = 34L, loop = true) // requested 34 ms/pixel
             }
         }
     }
@@ -431,24 +431,41 @@ class GlyphController(private val context: Context) {
             stopScrolling()
             clearDisplay()
             val width = offscreen.width
+            // Reuse a single frame bitmap to avoid per-frame allocations
+            val frameBitmap = android.graphics.Bitmap.createBitmap(25, 25, android.graphics.Bitmap.Config.ARGB_8888)
+            val frameCanvas = android.graphics.Canvas(frameBitmap)
+            val src = android.graphics.Rect()
+            val dst = android.graphics.Rect(0, 0, 25, 25)
             val thread = Thread {
                 try {
+                    try { Thread.currentThread().priority = Thread.NORM_PRIORITY + 2 } catch (_: Throwable) {}
                     do {
                         var cx = 0
                         while (true) {
                             if (stopRequested) { Log.d(TAG, "displayScrollingBitmap: stopRequested -> end thread"); return@Thread }
-                            // Wrap-around seamless scrolling
-                            val frameBitmap = if (cx <= width - 25) {
-                                Bitmap.createBitmap(offscreen, cx, 0, 25, 25)
+
+                            // Clear previous content to avoid ghosting before drawing new slice(s)
+                            frameCanvas.drawColor(android.graphics.Color.BLACK)
+
+                            if (cx <= width - 25) {
+                                src.set(cx, 0, cx + 25, 25)
+                                dst.set(0, 0, 25, 25)
+                                frameCanvas.drawBitmap(offscreen, src, dst, null)
                             } else {
-                                // stitch from end+start
                                 val rightWidth = width - cx
-                                val stitched = Bitmap.createBitmap(25, 25, Bitmap.Config.ARGB_8888)
-                                val c = Canvas(stitched)
-                                if (rightWidth > 0) c.drawBitmap(offscreen, android.graphics.Rect(cx, 0, width, 25), android.graphics.Rect(0, 0, rightWidth, 25), null)
+                                if (rightWidth > 0) {
+                                    src.set(cx, 0, width, 25)
+                                    dst.set(0, 0, rightWidth, 25)
+                                    frameCanvas.drawBitmap(offscreen, src, dst, null)
+                                }
                                 val leftWidth = 25 - rightWidth
-                                c.drawBitmap(offscreen, android.graphics.Rect(0, 0, leftWidth, 25), android.graphics.Rect(rightWidth, 0, 25, 25), null)
-                                stitched
+                                if (leftWidth > 0) {
+                                    src.set(0, 0, leftWidth, 25)
+                                    dst.set(rightWidth, 0, 25, 25)
+                                    frameCanvas.drawBitmap(offscreen, src, dst, null)
+                                }
+                                // Restore dst for next iteration
+                                dst.set(0, 0, 25, 25)
                             }
                             val obj = GlyphMatrixObject.Builder()
                                 .setImageSource(frameBitmap)
@@ -467,6 +484,7 @@ class GlyphController(private val context: Context) {
             }
             synchronized(scrollLock) {
                 stopRequested = false
+                thread.isDaemon = true
                 scrollingThread = thread
                 thread.start()
             }

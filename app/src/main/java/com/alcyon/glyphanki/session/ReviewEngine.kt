@@ -30,13 +30,15 @@ class ReviewEngine(private val context: Context) {
     private var cardStartTime = 0L
     private var backShownMs: Long = 0L
     private var lastKeyTime: Long = 0L
-    private val keyDebounceMs = 60L
+    private val keyDebounceMs = 40L // was 60L; lower for snappier input
     private var lastGradedId: Long = -1L
-    private val minBackDwellMs = 150L
+    private val minBackDwellMs = 120L // was 150L; keep safe but faster
     
     private var cardLoader: (suspend () -> AnkiCard?)? = null
     private var answerFunction: (suspend (AnkiCard, Int, Long) -> Boolean)? = null
     private var enableBackAutoAdvance = false
+    private var stallAttempts: Int = 0
+    private var consecutiveEmpty: Int = 0
     
     fun startSession(
         loader: suspend () -> AnkiCard?,
@@ -78,7 +80,7 @@ class ReviewEngine(private val context: Context) {
             Log.d(TAG, "Ignoring duplicate grade for card $cardId")
             return
         }
-        Log.d(TAG, "gradeAndAdvance: processing card ${card.noteId}:${card.cardOrd}")
+        Log.d(TAG, "gradeAndAdvance: processing card ${'$'}{card.noteId}:${'$'}{card.cardOrd}")
         scope.launch {
             try {
                 val timeTaken = System.currentTimeMillis() - cardStartTime
@@ -86,14 +88,17 @@ class ReviewEngine(private val context: Context) {
                 val success = withContext(Dispatchers.IO) {
                     answerFunction?.invoke(card, ease, timeTaken) ?: false
                 }
-                Log.d(TAG, "gradeAndAdvance: answerFunction returned $success for card ${card.noteId}:${card.cardOrd}")
+                Log.d(TAG, "gradeAndAdvance: answerFunction returned $success for card ${'$'}{card.noteId}:${'$'}{card.cardOrd}")
                 if (success) {
                     lastGradedId = cardId
-                    Log.d(TAG, "Graded card ${card.noteId}:${card.cardOrd} with ease $ease")
+                    Log.d(TAG, "Graded card ${'$'}{card.noteId}:${'$'}{card.cardOrd} with ease $ease")
                     Log.d(TAG, "gradeAndAdvance: calling loadNextCard()")
                     loadNextCard()
                 } else {
-                    Log.w(TAG, "Failed to grade card")
+                    Log.w(TAG, "Failed to grade card, skipping and refreshing queue")
+                    // Show a brief notice and move on; the loader will refresh/avoid this card
+                    withContext(Dispatchers.Main) { glyphController.displaySmart("Skipped") }
+                    loadNextCard()
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error grading card", e)
@@ -136,13 +141,29 @@ class ReviewEngine(private val context: Context) {
             val nextCard = withContext(Dispatchers.IO) { cardLoader?.invoke() }
             Log.d(TAG, "loadNextCard: loader returned noteOrd=${nextCard?.noteId}:${nextCard?.cardOrd}")
             if (nextCard != null) {
+                stallAttempts = 0
+                consecutiveEmpty = 0
                 withContext(Dispatchers.Main) {
                     currentCard = nextCard
                     showFront(nextCard)
                 }
             } else {
-                Log.d(TAG, "No more cards available")
-                withContext(Dispatchers.Main) { glyphController.displaySmart("Fini") }
+                consecutiveEmpty++
+                Log.d(TAG, "No more cards available (loader returned null) consecutiveEmpty=$consecutiveEmpty")
+                if (consecutiveEmpty >= 2) {
+                    Log.d(TAG, "No cards twice in a row -> End")
+                    withContext(Dispatchers.Main) { glyphController.displaySmart("End") }
+                    return
+                }
+                withContext(Dispatchers.Main) { glyphController.displaySmart("Refreshing…") }
+                stallAttempts++
+                if (stallAttempts <= 25) { // lower to reduce useless loops
+                    // Immediate retry for fluidity
+                    loadNextCard()
+                } else {
+                    Log.w(TAG, "No cards after $stallAttempts attempts; showing End")
+                    withContext(Dispatchers.Main) { glyphController.displaySmart("End") }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error loading next card", e)

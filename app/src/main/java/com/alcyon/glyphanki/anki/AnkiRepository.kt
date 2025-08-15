@@ -11,8 +11,7 @@ import android.content.ContentResolver
 import android.database.Cursor
 import android.util.Log
 import java.io.File
-
-private const val REVIEWINFO_CARD_ID = "cardId"
+import kotlin.math.max
 
 // Precompiled regex patterns for audio filename extraction
 private val SOUND_TAG_REGEX = Regex("\\[sound:([^\\]]+)\\]", RegexOption.IGNORE_CASE)
@@ -79,16 +78,16 @@ class AnkiRepository(private val context: Context) {
         val results = mutableListOf<AnkiCard>()
         val modelFieldNamesCache = mutableMapOf<Long, List<String>>() 
 
-        Log.d("AnkiRepository", "schedule query: sel='deckID=?' args='[${deckId}]' sort='limit=${max}'")
+        Log.d("AnkiRepository", "schedule query: sel='deckID=?,limit=?' args='[${deckId},${max}]'")
         val scheduleCursor = resolver.tryQuery(
             FlashCardsContract.ReviewInfo.CONTENT_URI,
             arrayOf(
                 FlashCardsContract.ReviewInfo.NOTE_ID,
                 FlashCardsContract.ReviewInfo.CARD_ORD
             ),
-            "deckID=?",
-            arrayOf(deckId.toString()),
-            "limit=${max}"
+            "deckID=?,limit=?",
+            arrayOf(deckId.toString(), max.toString()),
+            null
         )
 
         scheduleCursor?.use { cur ->
@@ -217,133 +216,12 @@ class AnkiRepository(private val context: Context) {
                 Log.d("AnkiRepository", "emit: sid=$syntheticId note=$noteId ord=$ord")
                 results.add(AnkiCard(syntheticId, front, back, noteId, ord, gradeable = true, frontAudioPath = frontAudioPath, backAudioPath = backAudioPath))
             }
-            Log.d("AnkiRepository", "loadReviewCards: queued=$queued built=${results.size}")
+            Log.d("AnkiRepository", "loadReviewCards: queued=$queued built=${'$'}{results.size}")
         }
 
         if (results.isEmpty()) {
-            Log.d("AnkiRepository", "loadReviewCards: schedule empty, fallback by deck name")
-            var deckName: String? = null
-            val dCur = resolver.tryQuery(
-                Uri.withAppendedPath(FlashCardsContract.Deck.CONTENT_ALL_URI, deckId.toString()),
-                arrayOf(FlashCardsContract.Deck.DECK_NAME), null, null, null
-            )
-            dCur?.use { dc ->
-                if (dc.moveToFirst()) {
-                    val idx = dc.getColumnIndex(FlashCardsContract.Deck.DECK_NAME)
-                    if (idx >= 0) deckName = dc.getString(idx)
-                }
-            }
-            val name = deckName
-            if (!name.isNullOrBlank()) {
-                val nCur = resolver.tryQuery(
-                    FlashCardsContract.Note.CONTENT_URI,
-                    arrayOf(FlashCardsContract.Note._ID, FlashCardsContract.Note.MID, FlashCardsContract.Note.FLDS),
-                    "deck:\"$name\"", null, null
-                )
-                nCur?.use { nc ->
-                    var count = 0
-                    while (nc.moveToNext() && count < max) {
-                        val noteId = nc.getLong(nc.getColumnIndex(FlashCardsContract.Note._ID))
-                        val mid = nc.getLong(nc.getColumnIndex(FlashCardsContract.Note.MID))
-                        val fldsJoined = nc.getString(nc.getColumnIndex(FlashCardsContract.Note.FLDS))
-
-                        val fieldNames: List<String> = if (mid > 0) {
-                            modelFieldNamesCache.getOrPut(mid) {
-                                val modelUri = Uri.withAppendedPath(FlashCardsContract.Model.CONTENT_URI, mid.toString())
-                                var names: List<String> = emptyList()
-                                val mCur = resolver.tryQuery(modelUri, arrayOf(FlashCardsContract.Model.FIELD_NAMES), null, null, null)
-                                mCur?.use { mc ->
-                                    if (mc.moveToFirst()) {
-                                        val fIdx = mc.getColumnIndex(FlashCardsContract.Model.FIELD_NAMES)
-                                        if (fIdx >= 0) names = (mc.getString(fIdx) ?: "").split('\u001F')
-                                    }
-                                }
-                                names
-                            }
-                        } else emptyList()
-
-                        var front = ""
-                        var back = ""
-                        var frontAudioPath: String? = null
-                        var backAudioPath: String? = null
-                        val fields = (fldsJoined ?: "").split('\u001F')
-                        if (fieldNames.isNotEmpty() && fields.isNotEmpty() && fieldNames.size == fields.size) {
-                            fun findIndex(name: String): Int {
-                                val idx = fieldNames.indexOfFirst { it.equals(name, ignoreCase = true) }
-                                return if (idx >= 0) idx else -1
-                            }
-                            val fi = findIndex(frontFieldName).let { if (it == -1) findIndex("Front") else it }.let { if (it == -1) 0 else it }
-                            val bi = findIndex(backFieldName).let { if (it == -1) findIndex("Back") else it }.let { if (it == -1) (if (fields.size > 1) 1 else 0) else it }
-                            front = fields.getOrNull(fi) ?: ""
-                            back = fields.getOrNull(bi) ?: ""
-
-                            if (frontAudioFields.isNotEmpty()) {
-                                val ai = frontAudioFields.firstNotNullOfOrNull { name ->
-                                    val idx = findIndex(name)
-                                    if (idx >= 0) idx else null
-                                } ?: -1
-                                if (ai >= 0) frontAudioPath = buildMediaPathFromFieldValue(fields.getOrNull(ai))
-                            }
-                            if (backAudioFields.isNotEmpty()) {
-                                val ai = backAudioFields.firstNotNullOfOrNull { name ->
-                                    val idx = findIndex(name)
-                                    if (idx >= 0) idx else null
-                                } ?: -1
-                                if (ai >= 0) backAudioPath = buildMediaPathFromFieldValue(fields.getOrNull(ai))
-                            }
-                        }
-
-                        // Fallback to parse audio embedded in the text fields
-                        if (frontAudioPath == null && front.isNotBlank()) frontAudioPath = buildMediaPathFromFieldValue(front)
-                        if (backAudioPath == null && back.isNotBlank()) backAudioPath = buildMediaPathFromFieldValue(back)
-
-                        var ord = 0
-                        if (front.isBlank() || back.isBlank()) {
-                            val noteUri = Uri.withAppendedPath(FlashCardsContract.Note.CONTENT_URI, noteId.toString())
-                            val cardsUri = Uri.withAppendedPath(noteUri, "cards")
-                            val cCur = resolver.tryQuery(
-                                cardsUri,
-                                arrayOf(
-                                    FlashCardsContract.Card.CARD_ORD,
-                                    FlashCardsContract.Card.QUESTION_SIMPLE,
-                                    FlashCardsContract.Card.ANSWER_PURE,
-                                    FlashCardsContract.Card.QUESTION,
-                                    FlashCardsContract.Card.ANSWER
-                                ),
-                                null, null, null
-                            )
-                            cCur?.use { cc ->
-                                if (cc.moveToFirst()) {
-                                    val ordIdx = cc.getColumnIndex(FlashCardsContract.Card.CARD_ORD)
-                                    ord = if (ordIdx >= 0) cc.getInt(ordIdx) else 0
-                                    val qsIdx = cc.getColumnIndex(FlashCardsContract.Card.QUESTION_SIMPLE)
-                                    val apIdx = cc.getColumnIndex(FlashCardsContract.Card.ANSWER_PURE)
-                                    val qIdx = cc.getColumnIndex(FlashCardsContract.Card.QUESTION)
-                                    val aIdx = cc.getColumnIndex(FlashCardsContract.Card.ANSWER)
-                                    if (front.isBlank()) {
-                                        front = when {
-                                            qsIdx >= 0 -> cc.getString(qsIdx) ?: front
-                                            qIdx >= 0 -> cc.getString(qIdx) ?: front
-                                            else -> front
-                                        }
-                                    }
-                                    if (back.isBlank()) {
-                                        back = when {
-                                            apIdx >= 0 -> cc.getString(apIdx) ?: back
-                                            aIdx >= 0 -> cc.getString(aIdx) ?: back
-                                            else -> back
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        val syntheticId = (noteId shl 8) or (ord.toLong() and 0xFF)
-                        results.add(AnkiCard(syntheticId, front, back, noteId, ord, gradeable = false, frontAudioPath = frontAudioPath, backAudioPath = backAudioPath))
-                        count++
-                    }
-                }
-            }
+            // Do NOT fallback to raw deck notes: respect scheduler. Returning empty ensures "End".
+            Log.d("AnkiRepository", "loadReviewCards: schedule empty -> no unscheduled fallback")
         }
 
         Log.d("AnkiRepository", "loadReviewCards: returning ${results.size} in ${System.currentTimeMillis() - t0}ms")
@@ -357,9 +235,9 @@ class AnkiRepository(private val context: Context) {
         val c = resolver.tryQuery(
             FlashCardsContract.ReviewInfo.CONTENT_URI,
             arrayOf(FlashCardsContract.ReviewInfo.NOTE_ID, FlashCardsContract.ReviewInfo.CARD_ORD),
-            "deckID=?",
-            arrayOf(deckId.toString()),
-            "limit=${limit}"
+            "deckID=?,limit=?",
+            arrayOf(deckId.toString(), limit.toString()),
+            null
         )
         c?.use { cur ->
             val nIdx = cur.getColumnIndex(FlashCardsContract.ReviewInfo.NOTE_ID)
@@ -372,7 +250,7 @@ class AnkiRepository(private val context: Context) {
                 i++
             }
         }
-        Log.d("AnkiRepository", "peekQueue deck=$deckId top=${out.joinToString { "${'$'}{it.first}:${'$'}{it.second}" }}")
+        Log.d("AnkiRepository", "peekQueue deck=$deckId top=${out.joinToString { "${it.first}:${it.second}" }}")
         out
     }
 
@@ -392,34 +270,166 @@ class AnkiRepository(private val context: Context) {
         }
     }
 
+    // Stronger provider cache invalidation: try provider call() hooks and bust-URIs with unique query params
+    suspend fun hardInvalidateProviderCaches(deckId: Long? = null) = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        val t0 = System.currentTimeMillis()
+        try {
+            val client = try { resolver.acquireUnstableContentProviderClient(com.ichi2.anki.FlashCardsContract.ReviewInfo.CONTENT_URI) } catch (_: Throwable) { null }
+            if (client != null) {
+                try {
+                    val methods: List<String> = listOf(
+                        "reload", "refresh", "reset", "invalidate", "invalidate_caches",
+                        "refreshScheduler", "reloadScheduler", "resetScheduler",
+                        "forceReload", "force_refresh", "recompute", "recomputeScheduler"
+                    )
+                    methods.forEach { method ->
+                        runCatching { client.call(method, null, null) }
+                    }
+                } catch (_: Throwable) {
+                } finally {
+                    try { client.close() } catch (_: Throwable) {}
+                    try { client.release() } catch (_: Throwable) {}
+                }
+            }
+        } catch (_: Throwable) {}
+        // Bust Decks URI
+        try {
+            val deckUri = com.ichi2.anki.FlashCardsContract.Deck.CONTENT_ALL_URI.buildUpon()
+                .appendQueryParameter("_ts", System.currentTimeMillis().toString())
+                .build()
+            resolver.tryQuery(deckUri, arrayOf(com.ichi2.anki.FlashCardsContract.Deck.DECK_ID), null, null, null)?.use { it.count }
+        } catch (_: Throwable) {}
+        // Bust ReviewInfo URI with deck filter if provided
+        try {
+            val riUri = com.ichi2.anki.FlashCardsContract.ReviewInfo.CONTENT_URI.buildUpon()
+                .appendQueryParameter("_ts", System.currentTimeMillis().toString())
+                .build()
+            val sel: String
+            val args: Array<String>
+            if (deckId != null) {
+                sel = "deckID=?,limit=?"; args = arrayOf(deckId.toString(), "3")
+            } else {
+                sel = "limit=?"; args = arrayOf("3")
+            }
+            resolver.tryQuery(riUri, arrayOf(com.ichi2.anki.FlashCardsContract.ReviewInfo.NOTE_ID), sel, args, null)?.use { it.count }
+        } catch (_: Throwable) {}
+        // Bust Notes URI
+        try {
+            val notesUri = com.ichi2.anki.FlashCardsContract.Note.CONTENT_URI.buildUpon()
+                .appendQueryParameter("_ts", System.currentTimeMillis().toString())
+                .build()
+            resolver.tryQuery(notesUri, arrayOf(com.ichi2.anki.FlashCardsContract.Note._ID), null, null, null)?.use { it.count }
+        } catch (_: Throwable) {}
+        Log.d("AnkiRepository", "hardInvalidateProviderCaches: took ${System.currentTimeMillis() - t0}ms")
+    }
+
+    suspend fun selectDeck(deckId: Long): Boolean = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        return@withContext try {
+            val values = ContentValues().apply {
+                put(FlashCardsContract.Deck.DECK_ID, deckId)
+            }
+            val uri = Uri.parse("content://com.ichi2.anki.flashcards/selected_deck/")
+            val rows = resolver.update(uri, values, null, null)
+            Log.d("AnkiRepository", "selectDeck: rows=$rows deck=$deckId")
+            rows > 0
+        } catch (e: Exception) {
+            Log.w("AnkiRepository", "selectDeck failed for deck=$deckId", e)
+            false
+        }
+    }
+
     suspend fun answerCard(noteId: Long, cardOrd: Int, ease: Int, timeTakenMs: Long): Boolean = withContext(Dispatchers.IO) {
         val t0 = System.currentTimeMillis()
         val resolver = context.contentResolver
         Log.d("AnkiRepository", "answerCard: sending note=$noteId ord=$cardOrd ease=$ease t=$timeTakenMs thread=${Thread.currentThread().name}")
+        val safeTime = max(1L, timeTakenMs)
+
         val values = ContentValues().apply {
             put(FlashCardsContract.ReviewInfo.NOTE_ID, noteId)
             put(FlashCardsContract.ReviewInfo.CARD_ORD, cardOrd)
             put(FlashCardsContract.ReviewInfo.EASE, ease)
-            put(FlashCardsContract.ReviewInfo.TIME_TAKEN, timeTakenMs)
+            put(FlashCardsContract.ReviewInfo.TIME_TAKEN, safeTime)
         }
+
+        var firstEx: Exception? = null
         val first = try {
             resolver.update(FlashCardsContract.ReviewInfo.CONTENT_URI, values, null, null)
         } catch (e: Exception) {
-            Log.w("AnkiRepository", "answerCard: first update failed note=$noteId ord=$cardOrd ease=$ease t=$timeTakenMs", e)
+            firstEx = e
+            Log.w("AnkiRepository", "answerCard: first update failed note=$noteId ord=$cardOrd ease=$ease t=$safeTime", e)
             -1
         }
         if (first > 0) {
-            Log.d("AnkiRepository", "answerCard: ok rows=$first note=$noteId ord=$cardOrd ease=$ease t=$timeTakenMs in ${System.currentTimeMillis() - t0}ms")
+            Log.d("AnkiRepository", "answerCard: ok rows=$first note=$noteId ord=$cardOrd ease=$ease t=$safeTime in ${System.currentTimeMillis() - t0}ms")
             return@withContext true
         }
+
+        // Warm up specific card and provider after failure (common after day rollover or state change)
+        warmUpCard(resolver, noteId, cardOrd)
+
+        var secondEx: Exception? = null
         val second = try {
             resolver.update(FlashCardsContract.ReviewInfo.CONTENT_URI, values, null, null)
         } catch (e: Exception) {
-            Log.w("AnkiRepository", "answerCard: retry failed note=$noteId ord=$cardOrd ease=$ease t=$timeTakenMs", e)
+            secondEx = e
+            Log.w("AnkiRepository", "answerCard: retry failed note=$noteId ord=$cardOrd ease=$ease t=$safeTime", e)
             -1
         }
-        Log.d("AnkiRepository", "answerCard: retry rows=$second note=$noteId ord=$cardOrd ease=$ease t=$timeTakenMs total ${System.currentTimeMillis() - t0}ms")
-        return@withContext second > 0
+        if (second > 0) {
+            Log.d("AnkiRepository", "answerCard: retry ok rows=$second note=$noteId ord=$cardOrd ease=$ease t=$safeTime total ${System.currentTimeMillis() - t0}ms")
+            return@withContext true
+        }
+
+        if (isCardModifiedError(firstEx) || isCardModifiedError(secondEx)) {
+            Log.w("AnkiRepository", "answerCard: conflict detected (card was modified), refreshing and will not force further retries for this card note=$noteId ord=$cardOrd")
+            try { forceSyncRefresh() } catch (_: Exception) {}
+            return@withContext false
+        }
+
+        // One last hard refresh attempt for non-conflict failures
+        try { forceSyncRefresh() } catch (_: Exception) {}
+        val third = try {
+            resolver.update(FlashCardsContract.ReviewInfo.CONTENT_URI, values, null, null)
+        } catch (e: Exception) {
+            Log.w("AnkiRepository", "answerCard: final attempt failed note=$noteId ord=$cardOrd ease=$ease t=$safeTime", e)
+            -1
+        }
+        Log.d("AnkiRepository", "answerCard: final rows=$third note=$noteId ord=$cardOrd ease=$ease t=$safeTime total ${System.currentTimeMillis() - t0}ms")
+        return@withContext third > 0
+    }
+
+    // Detect provider conflict messages like "card was modified" or stale state
+    private fun isCardModifiedError(t: Throwable?): Boolean {
+        val msg = t?.message?.lowercase() ?: return false
+        return msg.contains("card was modified") || msg.contains("stale") || msg.contains("conflict")
+    }
+
+    // Warm up the specific card and provider caches to reduce staleness after rollover
+    private fun warmUpCard(resolver: ContentResolver, noteId: Long, cardOrd: Int) {
+        try {
+            val noteUri = Uri.withAppendedPath(FlashCardsContract.Note.CONTENT_URI, noteId.toString())
+            val specificCardUri = Uri.withAppendedPath(Uri.withAppendedPath(noteUri, "cards"), cardOrd.toString())
+            resolver.tryQuery(
+                specificCardUri,
+                arrayOf(
+                    // Deck id touch + simple QA touch
+                    FlashCardsContract.Card.DECK_ID,
+                    FlashCardsContract.Card.QUESTION_SIMPLE,
+                    FlashCardsContract.Card.ANSWER_PURE
+                ),
+                null, null, null
+            )?.use { it.count }
+        } catch (_: Throwable) {}
+        // Also poke decks which historically triggers internal refresh paths
+        try {
+            resolver.query(
+                FlashCardsContract.Deck.CONTENT_ALL_URI,
+                arrayOf(FlashCardsContract.Deck.DECK_ID),
+                null, null, null
+            )?.use { }
+        } catch (_: Throwable) {}
     }
 
     private fun buildMediaPathFromFieldValue(value: String?): String? {
@@ -446,5 +456,34 @@ class AnkiRepository(private val context: Context) {
         return name.substringAfterLast('/')
             .substringAfterLast('\\')
             .trim()
+    }
+
+    suspend fun preWarmDeckTop(deckId: Long) = withContext(Dispatchers.IO) {
+        val resolver = context.contentResolver
+        try {
+            val top = resolver.tryQuery(
+                FlashCardsContract.ReviewInfo.CONTENT_URI,
+                arrayOf(FlashCardsContract.ReviewInfo.NOTE_ID, FlashCardsContract.ReviewInfo.CARD_ORD),
+                "deckID=?,limit=?",
+                arrayOf(deckId.toString(), "1"),
+                null
+            )
+            var nid: Long? = null
+            var ord: Int? = null
+            top?.use { c ->
+                if (c.moveToFirst()) {
+                    val nIdx = c.getColumnIndex(FlashCardsContract.ReviewInfo.NOTE_ID)
+                    val oIdx = c.getColumnIndex(FlashCardsContract.ReviewInfo.CARD_ORD)
+                    if (nIdx >= 0) nid = c.getLong(nIdx)
+                    if (oIdx >= 0) ord = c.getInt(oIdx)
+                }
+            }
+            if (nid != null && ord != null) {
+                Log.d("AnkiRepository", "preWarmDeckTop: warming note=$nid ord=$ord for deck=$deckId")
+                warmUpCard(resolver, nid!!, ord!!)
+            }
+        } catch (e: Exception) {
+            Log.w("AnkiRepository", "preWarmDeckTop failed for deck=$deckId", e)
+        }
     }
 }
