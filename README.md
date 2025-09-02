@@ -73,6 +73,6 @@ I’m not a developer — this is mainly a **personal project**.
 GlyphAnki is licensed under the [GPLv3](./LICENSE).
 
 This project makes use of the [AnkiDroid API](https://github.com/ankidroid/Anki-Android), 
-which is distributed under the GNU Lesser General Public License (LGPL v3).    
+which is distributed under the GNU Lesser General Public License (LGPL v3), and [GlyphSDK](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit/blob/main/LICENSE.md), which is distributed under the Glyph SDK EULA License.
 "Anki" is a registered trademark of Ankitects Pty Ltd.
 
