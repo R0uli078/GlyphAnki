@@ -68,3 +68,11 @@ I’m not a developer — this is mainly a **personal project**.
 
 ---
 
+## License
+
+GlyphAnki is licensed under the [GPLv3](./LICENSE).
+
+This project makes use of the [AnkiDroid API](https://github.com/ankidroid/Anki-Android), 
+which is distributed under the GNU Lesser General Public License (LGPL v3).    
+"Anki" is a registered trademark of Ankitects Pty Ltd.
+
