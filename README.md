@@ -70,7 +70,7 @@ I’m not a developer — this is mainly a **personal project**.
 
 ---
 
-## License
+## 📋 License
 
 GlyphAnki is licensed under the [GPLv3](./LICENSE).
 
