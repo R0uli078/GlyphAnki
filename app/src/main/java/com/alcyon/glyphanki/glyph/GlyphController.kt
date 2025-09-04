@@ -236,13 +236,13 @@ class GlyphController(private val context: Context) {
 
     // Smart display: ASCII-only uses setText, otherwise high-quality bitmap; scroll if needed
     fun displaySmart(text: String) {
-        Log.d(TAG, "displaySmart: len=${text.length} ascii=${text.all { it.code in 32..126 }}")
-        val isAscii = text.all { it.code in 32..126 }
-        if (isAscii) {
+        val isLatin = text.all { isLatinishChar(it) }
+        Log.d(TAG, "displaySmart: len=${text.length} latin=$isLatin")
+        if (isLatin) {
             ensureReady { glyphManager ->
                 stopScrolling()
                 clearDisplay()
-                val off = renderCleanAsciiOffscreen(text)
+                val off = renderCleanAsciiOffscreen(text, fontSize = getFontSizeAscii())
                 if (off.contentWidth <= 25) {
                     val target = android.graphics.Bitmap.createBitmap(25, 25, android.graphics.Bitmap.Config.ARGB_8888)
                     val c = android.graphics.Canvas(target)
@@ -256,7 +256,7 @@ class GlyphController(private val context: Context) {
                     Log.d(TAG, "displaySmart(ascii, static) frame set")
                 } else {
                     Log.d(TAG, "displaySmart(ascii) -> scrolling, width=${off.contentWidth}")
-                    displayScrollingBitmap(off.bitmap, speedMs = 24L, loop = true) // requested 24 ms/pixel
+                    displayScrollingBitmap(off.bitmap, speedMs = getScrollSpeedAscii(), loop = true)
                 }
             }
             return
@@ -264,33 +264,21 @@ class GlyphController(private val context: Context) {
         ensureReady { glyphManager ->
             stopScrolling()
             clearDisplay()
-            val off = renderMixedOffscreen(text)
+            val off = renderMixedOffscreen(text, fontSize = getFontSizeBitmap())
             if (off.contentWidth <= 25) {
                 val target = android.graphics.Bitmap.createBitmap(25, 25, android.graphics.Bitmap.Config.ARGB_8888)
                 val c = android.graphics.Canvas(target)
-                val face = pickThinnestTypeface(text)
-                val p = android.graphics.Paint().apply {
-                    color = android.graphics.Color.WHITE
-                    textSize = 8f
-                    isAntiAlias = false
-                    isSubpixelText = false
-                    flags = flags and android.graphics.Paint.SUBPIXEL_TEXT_FLAG.inv()
-                    textAlign = android.graphics.Paint.Align.LEFT
-                    style = android.graphics.Paint.Style.FILL
-                    typeface = face
-                }
-                val fm = p.fontMetrics
-                val baseline = kotlin.math.round(((25f - (fm.bottom - fm.top)) / 2f - fm.top)).toFloat()
-                val w = p.measureText(text)
-                val sx = kotlin.math.round(((25f - w) / 2f)).toFloat().coerceAtLeast(0f)
-                c.drawText(text, sx, baseline, p)
+                val centerX = (25 - off.contentWidth) / 2f
+                val sourceX = 4f
+                val destX = centerX - sourceX
+                c.drawBitmap(off.bitmap, destX, 0f, null)
                 val obj = com.nothing.ketchum.GlyphMatrixObject.Builder().setImageSource(target).setScale(100).setOrientation(0).setPosition(0, 0).setBrightness(255).build()
                 val frame = com.nothing.ketchum.GlyphMatrixFrame.Builder().addTop(obj).build(context)
                 safeSetFrame(glyphManager, frame)
                 Log.d(TAG, "displaySmart(mixed, static) frame set")
             } else {
                 Log.d(TAG, "displaySmart(mixed) -> scrolling, width=${off.contentWidth}")
-                displayScrollingBitmap(off.bitmap, speedMs = 34L, loop = true) // requested 34 ms/pixel
+                displayScrollingBitmap(off.bitmap, speedMs = getScrollSpeedBitmap(), loop = true)
             }
         }
     }
@@ -299,6 +287,25 @@ class GlyphController(private val context: Context) {
         return (ch in '\u3040'..'\u30FF') || (ch in '\u31F0'..'\u31FF') || (ch in '\u3400'..'\u4DBF') || (ch in '\u4E00'..'\u9FFF') || (ch in '\uFF66'..'\uFF9D')
     }
 
+    // New: accept Latin characters with diacritics and common punctuation used in FR/EN so we keep the fast "ascii" path
+    private fun isLatinishChar(ch: Char): Boolean {
+        val code = ch.code
+        return when {
+            // Basic Latin (printable ASCII)
+            code in 0x20..0x7E -> true
+            // Latin-1 Supplement (includes é, è, ê, â, ï, ç, « », etc.)
+            code in 0x00A0..0x00FF -> true
+            // Latin Extended-A and B (includes Œ/œ and others)
+            code in 0x0100..0x024F -> true
+            // Combining diacritical marks (for decomposed accents)
+            code in 0x0300..0x036F -> true
+            // Common punctuation often used in French text
+            ch == '\u2019' || ch == '\u2018' || ch == '\u2013' || ch == '\u2014' || ch == '\u2026' || ch == '\u20AC' -> true
+            else -> false
+        }
+    }
+
+    // Choose a thin Latin typeface for best legibility in 25x25 by minimizing white pixel count
     private fun pickThinnestTypeface(sampleText: String): Typeface {
         val candidates = listOf(
             Typeface.MONOSPACE,
@@ -337,7 +344,7 @@ class GlyphController(private val context: Context) {
     private fun renderCleanAsciiOffscreen(text: String, fontSize: Float = 9f): OffscreenRender {
         val paint = Paint().apply {
             color = android.graphics.Color.WHITE
-            textSize = fontSize  // Use 8f for best MONOSPACE rendering
+            textSize = fontSize
             isAntiAlias = false
             isSubpixelText = false
             flags = flags and Paint.SUBPIXEL_TEXT_FLAG.inv()
@@ -345,11 +352,11 @@ class GlyphController(private val context: Context) {
             style = Paint.Style.FILL
             isFilterBitmap = false
             isDither = false
-            typeface = android.graphics.Typeface.MONOSPACE  // Clean and neutral
+            typeface = android.graphics.Typeface.MONOSPACE
         }
         val textWidth = paint.measureText(text)
         val contentWidth = kotlin.math.ceil(textWidth).toInt()
-        val padding = 8  // More padding for faster scrolling
+        val padding = 8
         val offW = (contentWidth + padding * 2).coerceAtLeast(26)
         val bmp = Bitmap.createBitmap(offW, 25, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bmp)
@@ -384,10 +391,10 @@ class GlyphController(private val context: Context) {
         return OffscreenRender(bmp, contentWidth)
     }
 
-    private fun renderMixedOffscreen(text: String): OffscreenRender {
+    private fun renderMixedOffscreen(text: String, fontSize: Float = 8f): OffscreenRender {
         val paint = Paint().apply {
             color = android.graphics.Color.WHITE
-            textSize = 8f  // Same as clean ASCII for consistency
+            textSize = fontSize
             isAntiAlias = false
             isSubpixelText = false
             flags = flags and Paint.SUBPIXEL_TEXT_FLAG.inv()
@@ -402,7 +409,7 @@ class GlyphController(private val context: Context) {
             paint.typeface = if (isJapaneseChar(ch)) {
                 pickThinnestTypeface(ch.toString())
             } else {
-                android.graphics.Typeface.MONOSPACE  // Use MONOSPACE for ASCII in mixed text too
+                android.graphics.Typeface.MONOSPACE
             }
             totalWidth += paint.measureText(ch.toString())
         }
@@ -417,7 +424,7 @@ class GlyphController(private val context: Context) {
             paint.typeface = if (isJapaneseChar(ch)) {
                 pickThinnestTypeface(ch.toString())
             } else {
-                android.graphics.Typeface.MONOSPACE  // Use MONOSPACE for ASCII in mixed text too
+                android.graphics.Typeface.MONOSPACE
             }
             val w = paint.measureText(ch.toString())
             canvas.drawText(ch.toString(), kotlin.math.round(x).toFloat(), baseline, paint)
@@ -523,33 +530,29 @@ class GlyphController(private val context: Context) {
                 "ntypejpregular.ttf",
                 "NTypeJP.otf"
             ) ?: runCatching { Typeface.create("ntypejpregular", Typeface.NORMAL) }.getOrNull())
+            val fontSize = getFontSizeBitmap()
             // Try multiple font configurations for thinnest possible Japanese
             val fonts = listOfNotNull(
-                // Try common fonts; we will pick the thinnest by pixel count
                 android.graphics.Typeface.MONOSPACE,
                 android.graphics.Typeface.SANS_SERIF,
                 android.graphics.Typeface.DEFAULT,
                 android.graphics.Typeface.create("sans-serif-light", android.graphics.Typeface.NORMAL),
                 android.graphics.Typeface.create("sans-serif-thin", android.graphics.Typeface.NORMAL),
-                // Optional: UI schoolbook font as candidate
                 runCatching { android.graphics.Typeface.createFromAsset(context.assets, "fonts/UDDigiKyokashoN-R.ttf") }.getOrNull(),
-                // Optional external jp font if loaded, but only as candidate
                 ntype
             )
-
 
             if (ntype != null) {
                 val bmp = Bitmap.createBitmap(25, 25, Bitmap.Config.ARGB_8888)
                 val c = Canvas(bmp)
                 val p = Paint().apply {
                     color = android.graphics.Color.WHITE
-                    textSize = 8f
+                    textSize = fontSize
                     isAntiAlias = false
                     isSubpixelText = false
                     flags = flags and Paint.SUBPIXEL_TEXT_FLAG.inv()
                     isFilterBitmap = false
                     isDither = false
-                    // Avoid any artificial shaping that could thicken strokes
                     letterSpacing = 0f
                     textScaleX = 1f
                     isFakeBoldText = false
@@ -575,7 +578,6 @@ class GlyphController(private val context: Context) {
                 toast("\u2713 Ntype-JP font applied")
                 return
             }
-            // Else: try each font and pick the thinnest result
             var bestBitmap: Bitmap? = null
             var minPixelCount = Int.MAX_VALUE
 
@@ -585,26 +587,21 @@ class GlyphController(private val context: Context) {
 
                 val paint = Paint().apply {
                     color = android.graphics.Color.WHITE
-                    textSize = 8f  // readability
-                    isAntiAlias = false  // Sharp pixels
+                    textSize = fontSize
+                    isAntiAlias = false
                     isSubpixelText = false
-                    // Ensure no subpixel flag remains
                     flags = flags and Paint.SUBPIXEL_TEXT_FLAG.inv()
                     textAlign = Paint.Align.LEFT
                     style = Paint.Style.FILL
-                    // Try UI font for kana normalization
                     typeface = font
                 }
-                // Center vertically using font metrics (rounded to integer pixels)
                 val fm = paint.fontMetrics
                 val baseline = ((25f - (fm.bottom - fm.top)) / 2f - fm.top)
                 val baselineInt = kotlin.math.round(baseline).toFloat()
-                // Center horizontally using measured width, aligned to integer pixel
                 val textWidth = paint.measureText(text)
                 val startX = kotlin.math.round(((25f - textWidth) / 2f)).toFloat().coerceAtLeast(0f)
                 testCanvas.drawText(text, startX, baselineInt, paint)
 
-                // Count white pixels to find thinnest rendering
                 val pixels = IntArray(25 * 25)
                 testBitmap.getPixels(pixels, 0, 25, 0, 0, 25, 25)
                 val whitePixelCount = pixels.count { it == android.graphics.Color.WHITE }
@@ -615,13 +612,12 @@ class GlyphController(private val context: Context) {
                 }
             }
 
-            // Use the thinnest font result, or fallback to default
             val finalBitmap = bestBitmap ?: run {
                 val fallbackBitmap = Bitmap.createBitmap(25, 25, Bitmap.Config.ARGB_8888)
                 val fallbackCanvas = Canvas(fallbackBitmap)
                 val fallbackPaint = Paint().apply {
                     color = android.graphics.Color.WHITE
-                    textSize = 8f
+                    textSize = fontSize
                     isAntiAlias = false
                     isSubpixelText = false
                     flags = flags and Paint.SUBPIXEL_TEXT_FLAG.inv()
@@ -638,23 +634,21 @@ class GlyphController(private val context: Context) {
                 fallbackBitmap
             }
 
-            // Japanese text: use the optimized thinnest bitmap
             val textObject = GlyphMatrixObject.Builder()
                 .setImageSource(finalBitmap)
-                .setScale(100)  // Normal scale
+                .setScale(100)
                 .setOrientation(0)
                 .setPosition(0, 0)
                 .setBrightness(255)
                 .build()
 
-            // Default frame
             val frame = com.nothing.ketchum.GlyphMatrixFrame.Builder()
                 .addTop(textObject)
                 .build(context)
 
             safeSetFrame(glyphManager, frame)
-            Log.d(TAG, "renderTextToBitmap: thinnest bitmap used, pixels=$minPixelCount")
-            toast("\u2713 Thinnest Japanese bitmap ($minPixelCount pixels): $text")
+            Log.d(TAG, "renderTextToBitmap: thinnest bitmap used")
+            toast("\u2713 Thinnest Japanese bitmap: $text")
         } catch (e: Exception) {
             Log.e(TAG, "renderTextToBitmap failed: ${e.message}")
             toast("Text bitmap render failed: ${e.message}")
@@ -752,4 +746,9 @@ class GlyphController(private val context: Context) {
             try { Thread.sleep(durationMs) } catch (_: Throwable) {}
         }
     }
+
+    private fun getFontSizeAscii(): Float = try { context.getSharedPreferences("display_prefs", Context.MODE_PRIVATE).getFloat("font_ascii", 9f) } catch (_: Throwable) { 9f }
+    private fun getFontSizeBitmap(): Float = try { context.getSharedPreferences("display_prefs", Context.MODE_PRIVATE).getFloat("font_bitmap", 8f) } catch (_: Throwable) { 8f }
+    private fun getScrollSpeedAscii(): Long = try { context.getSharedPreferences("display_prefs", Context.MODE_PRIVATE).getInt("scroll_ascii", 24).toLong() } catch (_: Throwable) { 24L }
+    private fun getScrollSpeedBitmap(): Long = try { context.getSharedPreferences("display_prefs", Context.MODE_PRIVATE).getInt("scroll_bitmap", 34).toLong() } catch (_: Throwable) { 34L }
 }

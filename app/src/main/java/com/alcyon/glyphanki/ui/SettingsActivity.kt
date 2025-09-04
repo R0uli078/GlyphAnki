@@ -20,6 +20,9 @@ import android.provider.DocumentsContract
 import android.graphics.Typeface
 import com.alcyon.glyphanki.anki.AnkiAccessManager
 import android.database.DataSetObserver
+import android.view.LayoutInflater
+import android.content.SharedPreferences
+import androidx.core.content.ContextCompat
 
 class SettingsActivity : ComponentActivity() {
     private var udFace: Typeface? = null
@@ -33,6 +36,8 @@ class SettingsActivity : ComponentActivity() {
     private lateinit var audioToggle: Switch
     private lateinit var accessibilityStatus: TextView
     private lateinit var ankiApiStatus: TextView
+
+    private lateinit var displayPrefs: SharedPreferences
 
     private val openTree = registerForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri: Uri? ->
         handlePickedTreeUri(uri)
@@ -62,11 +67,11 @@ class SettingsActivity : ComponentActivity() {
     }
 
     private fun applyGlobalTypeface(root: View) {
-        // Apply UDDigiKyokashoN-R to all text widgets except the title
+        // Apply UDDigiKyokashoN-R to all text widgets except the title, preserving existing style (e.g., italic)
         val ud = runCatching { Typeface.createFromAsset(assets, "fonts/UDDigiKyokashoN-R.ttf") }.getOrNull() ?: return
         fun apply(v: View) {
             when (v) {
-                is TextView -> if (v.id != R.id.settingsTitle) v.typeface = ud
+                is TextView -> if (v.id != R.id.settingsTitle) v.setTypeface(ud, v.typeface?.style ?: Typeface.NORMAL)
                 is ViewGroup -> for (i in 0 until v.childCount) apply(v.getChildAt(i))
             }
         }
@@ -163,6 +168,8 @@ class SettingsActivity : ComponentActivity() {
         setContentView(R.layout.activity_settings)
         val prefs = FieldPreferences(this)
         prefs.ensureDefaults()
+
+        displayPrefs = getSharedPreferences("display_prefs", MODE_PRIVATE)
 
         // Typeface handle for adapters
         udFace = runCatching { Typeface.createFromAsset(assets, "fonts/UDDigiKyokashoN-R.ttf") }.getOrNull()
@@ -283,33 +290,274 @@ class SettingsActivity : ComponentActivity() {
         frontAudioList.adapter = frontAudioAdapter
         backAudioList.adapter = backAudioAdapter
 
-        // Observe data changes to resize lists after layout
-        fun observe(adapter: ArrayAdapter<String>, list: ListView) {
-            adapter.registerDataSetObserver(object : DataSetObserver() {
-                override fun onChanged() { list.updateHeightToContent() }
-                override fun onInvalidated() { list.updateHeightToContent() }
-            })
+        // Wire up buttons
+        btnAccessibility.setOnClickListener {
+            runCatching {
+                startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }.onFailure { Toast.makeText(this, "Cannot open Accessibility settings", Toast.LENGTH_SHORT).show() }
         }
-        observe(frontAdapter, frontList)
-        observe(backAdapter, backList)
-        observe(frontAudioAdapter, frontAudioList)
-        observe(backAudioAdapter, backAudioList)
+        btnGrantAnkiApi.setOnClickListener {
+            AnkiAccessManager(this).openPermissionRequest(this)
+        }
+        btnOpenAnki?.setOnClickListener {
+            val pkg = packageName
+            val uid = applicationInfo.uid
 
-        // Initial sizing after first layout
-        frontList.updateHeightToContent()
-        backList.updateHeightToContent()
-        frontAudioList.updateHeightToContent()
-        backAudioList.updateHeightToContent()
+            // Priorité: écrans Settings de l’app (App Permission Settings). Ajoute data=package: et variantes supplémentaires.
+            val candidates = mutableListOf<Intent>().apply {
+                // 1) AppPermissionSettings (direct)
+                add(Intent().apply {
+                    setClassName("com.android.settings", "com.android.settings.applications.appinfo.AppPermissionSettings")
+                    data = Uri.parse("package:$pkg")
+                    putExtra("android.intent.extra.PACKAGE_NAME", pkg)
+                    putExtra("app_package", pkg)
+                    putExtra("package_name", pkg)
+                    putExtra("app_uid", uid)
+                })
+                // 2) Settings$AppPermissionSettingsActivity
+                add(Intent().apply {
+                    setClassName("com.android.settings", "com.android.settings.Settings\$AppPermissionSettingsActivity")
+                    data = Uri.parse("package:$pkg")
+                    putExtra("android.intent.extra.PACKAGE_NAME", pkg)
+                    putExtra("app_package", pkg)
+                    putExtra("package_name", pkg)
+                    putExtra("app_uid", uid)
+                })
+                // 3) SubSettings avec fragment
+                add(Intent().apply {
+                    setClassName("com.android.settings", "com.android.settings.SubSettings")
+                    data = Uri.parse("package:$pkg")
+                    putExtra(":settings:show_fragment", "com.android.settings.applications.appinfo.AppPermissionSettings")
+                    putExtra("android.intent.extra.PACKAGE_NAME", pkg)
+                    putExtra("app_package", pkg)
+                    putExtra("package_name", pkg)
+                    putExtra("app_uid", uid)
+                    putExtra(":settings:show_fragment_args", android.os.Bundle().apply {
+                        putString("android.intent.extra.PACKAGE_NAME", pkg)
+                        putString("app_package", pkg)
+                        putString("package_name", pkg)
+                        putInt("app_uid", uid)
+                    })
+                })
+                // 4) Settings$AppInfoDashboardActivity + fragment (autre chemin OEM)
+                add(Intent().apply {
+                    setClassName("com.android.settings", "com.android.settings.Settings\$AppInfoDashboardActivity")
+                    data = Uri.parse("package:$pkg")
+                    putExtra(":settings:show_fragment", "com.android.settings.applications.appinfo.AppPermissionSettings")
+                    putExtra("android.intent.extra.PACKAGE_NAME", pkg)
+                    putExtra(":settings:show_fragment_args", android.os.Bundle().apply {
+                        putString("android.intent.extra.PACKAGE_NAME", pkg)
+                    })
+                })
+            }
 
-        fun notifyAndSaveFront() { frontAdapter.notifyDataSetChanged(); save(); frontInput.text.clear(); frontList.updateHeightToContent() }
-        fun notifyAndSaveBack() { backAdapter.notifyDataSetChanged(); save(); backInput.text.clear(); backList.updateHeightToContent() }
-        fun notifyAndSaveFrontAudio() { frontAudioAdapter.notifyDataSetChanged(); save(); frontAudioInput.text.clear(); frontAudioList.updateHeightToContent() }
-        fun notifyAndSaveBackAudio() { backAudioAdapter.notifyDataSetChanged(); save(); backAudioInput.text.clear(); backAudioList.updateHeightToContent() }
+            // Fallback: App Info
+            candidates += Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                data = Uri.parse("package:$pkg")
+            }
 
-        addFront.setOnClickListener { val v = frontInput.text.toString().trim(); if (v.isNotEmpty()) { fronts.removeAll { it.equals(v, true) }; fronts.add(0, v); notifyAndSaveFront() } }
-        addBack.setOnClickListener { val v = backInput.text.toString().trim(); if (v.isNotEmpty()) { backs.removeAll { it.equals(v, true) }; backs.add(0, v); notifyAndSaveBack() } }
-        addFrontAudio.setOnClickListener { val v = frontAudioInput.text.toString().trim(); if (v.isNotEmpty()) { frontAudios.removeAll { it.equals(v, true) }; frontAudios.add(0, v); notifyAndSaveFrontAudio() } }
-        addBackAudio.setOnClickListener { val v = backAudioInput.text.toString().trim(); if (v.isNotEmpty()) { backAudios.removeAll { it.equals(v, true) }; backAudios.add(0, v); notifyAndSaveBackAudio() } }
+            var launched = false
+            for (intent in candidates) {
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                if (intent.resolveActivity(packageManager) != null) {
+                    try {
+                        startActivity(intent)
+                        launched = true
+                        break
+                    } catch (_: Throwable) { /* try next */ }
+                }
+            }
+            if (!launched) {
+                Toast.makeText(this, "Cannot open app settings", Toast.LENGTH_SHORT).show()
+            } else {
+                // Guidance for the user to grant the DB permission on OEM ROMs that land on App Info
+                Toast.makeText(
+                    this,
+                    "Permissions → Additional permissions → Read and write AnkiDroid database",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+        btnPickMediaFolder.setOnClickListener {
+            val initial: Uri? = runCatching {
+                DocumentsContract.buildDocumentUri(
+                    "com.android.externalstorage.documents",
+                    "primary:AnkiDroid/collection.media"
+                )
+            }.getOrNull()
+            runCatching { openTree.launch(initial) }.onFailure { openTree.launch(null) }
+        }
+
+        // Inflate and insert display settings card
+        val mainLayout = (root.getChildAt(0) as? ScrollView)?.getChildAt(0) as? LinearLayout
+        val displayCard = LayoutInflater.from(this).inflate(R.layout.settings_display_card, mainLayout, false)
+        // Append at the end to avoid disturbing existing blocks order
+        mainLayout?.addView(displayCard)
+        // Add a tiny bottom spacer at the very end for a clean end of the menu
+        mainLayout?.addView(View(this).apply {
+            layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, (16 * resources.displayMetrics.density).toInt()).apply {
+                topMargin = (8 * resources.displayMetrics.density).toInt()
+            }
+            setBackgroundColor(android.graphics.Color.TRANSPARENT)
+        })
+        // Apply app-wide typeface to the newly inflated block (since it was added after initial pass)
+        applyGlobalTypeface(displayCard)
+
+        // Default values
+        val defaultFontAscii = 10f
+        val defaultFontBitmap = 12f
+        val defaultScrollAscii = 24
+        val defaultScrollBitmap = 34
+        val minFont = 6f
+        val maxFont = 18f
+        val minScroll = 10
+        val maxScroll = 60
+
+        // Load or set defaults
+        val fontAscii = displayPrefs.getFloat("font_ascii", defaultFontAscii)
+        val fontBitmap = displayPrefs.getFloat("font_bitmap", defaultFontBitmap)
+        val scrollAscii = displayPrefs.getInt("scroll_ascii", defaultScrollAscii)
+        val scrollBitmap = displayPrefs.getInt("scroll_bitmap", defaultScrollBitmap)
+
+        val seekFontAscii = displayCard.findViewById<SeekBar>(R.id.seekFontSizeAscii)
+        val seekFontBitmap = displayCard.findViewById<SeekBar>(R.id.seekFontSizeBitmap)
+        val seekScrollAscii = displayCard.findViewById<SeekBar>(R.id.seekScrollSpeedAscii)
+        val seekScrollBitmap = displayCard.findViewById<SeekBar>(R.id.seekScrollSpeedBitmap)
+        val valueFontAscii = displayCard.findViewById<TextView>(R.id.valueFontSizeAscii)
+        val valueFontBitmap = displayCard.findViewById<TextView>(R.id.valueFontSizeBitmap)
+        val valueScrollAscii = displayCard.findViewById<TextView>(R.id.valueScrollSpeedAscii)
+        val valueScrollBitmap = displayCard.findViewById<TextView>(R.id.valueScrollSpeedBitmap)
+        val markerFontAscii = displayCard.findViewById<View>(R.id.markerFontAscii)
+        val markerFontBitmap = displayCard.findViewById<View>(R.id.markerFontBitmap)
+        val markerScrollAscii = displayCard.findViewById<View>(R.id.markerScrollAscii)
+        val markerScrollBitmap = displayCard.findViewById<View>(R.id.markerScrollBitmap)
+
+        // Style seekbars programmatically for consistency
+        listOf(seekFontAscii, seekFontBitmap, seekScrollAscii, seekScrollBitmap).forEach { sb ->
+            sb.thumbTintList = android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this, R.color.nothing_red))
+            sb.progressTintList = android.content.res.ColorStateList.valueOf(ContextCompat.getColor(this, R.color.nothing_red))
+            sb.progressBackgroundTintList = android.content.res.ColorStateList.valueOf(0x14FFFFFF)
+            sb.splitTrack = false
+        }
+
+        // Helper: round to integer for both font and speed
+        fun roundFont(v: Float): Float = kotlin.math.round(v)
+        fun roundSpeed(v: Int): Int = v // already integer; mapping uses Int
+
+        // Set initial positions (middle = default)
+        seekFontAscii.progress = (((fontAscii - minFont) / (maxFont - minFont)) * 100).toInt()
+        seekFontBitmap.progress = (((fontBitmap - minFont) / (maxFont - minFont)) * 100).toInt()
+        seekScrollAscii.progress = (((scrollAscii - minScroll).toFloat() / (maxScroll - minScroll)) * 100).toInt()
+        seekScrollBitmap.progress = (((scrollBitmap - minScroll).toFloat() / (maxScroll - minScroll)) * 100).toInt()
+
+        // Magnetic snap threshold around defaults (percent of track)
+        fun snapProgress(progress: Int, defaultValue: Int, min: Int, max: Int): Int {
+            val current = min + ((progress / 100f) * (max - min)).toInt()
+            val snap = 2 // tighter: +/-2 units
+            return if (kotlin.math.abs(current - defaultValue) <= snap) (((defaultValue - min).toFloat() / (max - min)) * 100).toInt() else progress
+        }
+        fun snapProgressF(progress: Int, defaultValue: Float, min: Float, max: Float, threshold: Float = 0.6f): Int {
+            val current = min + (progress / 100f) * (max - min)
+            return if (kotlin.math.abs(current - defaultValue) <= threshold) (((defaultValue - min) / (max - min)) * 100).toInt() else progress
+        }
+        fun snapProgressFMulti(progress: Int, snapValues: FloatArray, min: Float, max: Float, threshold: Float = 0.6f): Int {
+            val current = min + (progress / 100f) * (max - min)
+            var best: Float? = null
+            var bestDiff = Float.MAX_VALUE
+            for (s in snapValues) {
+                val d = kotlin.math.abs(current - s)
+                if (d < bestDiff) { bestDiff = d; best = s }
+            }
+            return if (best != null && bestDiff <= threshold) (((best!! - min) / (max - min)) * 100).toInt() else progress
+        }
+
+        fun updateFontAscii(progress: Int) {
+            val raw = minFont + (progress / 100f) * (maxFont - minFont)
+            val value = roundFont(raw)
+            valueFontAscii.text = String.format("%.0f", value)
+            displayPrefs.edit().putFloat("font_ascii", value).apply()
+        }
+        fun updateFontBitmap(progress: Int) {
+            val raw = minFont + (progress / 100f) * (maxFont - minFont)
+            val value = roundFont(raw)
+            valueFontBitmap.text = String.format("%.0f", value)
+            displayPrefs.edit().putFloat("font_bitmap", value).apply()
+        }
+        fun updateScrollAscii(progress: Int) {
+            val value = minScroll + ((progress / 100f) * (maxScroll - minScroll)).toInt()
+            valueScrollAscii.text = value.toString()
+            displayPrefs.edit().putInt("scroll_ascii", value).apply()
+        }
+        fun updateScrollBitmap(progress: Int) {
+            val value = minScroll + ((progress / 100f) * (maxScroll - minScroll)).toInt()
+            valueScrollBitmap.text = value.toString()
+            displayPrefs.edit().putInt("scroll_bitmap", value).apply()
+        }
+
+        // Initialize values
+        updateFontAscii(seekFontAscii.progress)
+        updateFontBitmap(seekFontBitmap.progress)
+        updateScrollAscii(seekScrollAscii.progress)
+        updateScrollBitmap(seekScrollBitmap.progress)
+
+        // True magnetic snapping: update thumb to snapped position
+        seekFontAscii.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val p = if (fromUser) snapProgressF(progress, defaultFontAscii, minFont, maxFont) else progress
+                if (fromUser && p != progress) seekBar?.progress = p
+                updateFontAscii(p)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        seekFontBitmap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val p = if (fromUser) snapProgressFMulti(progress, floatArrayOf(8f, 12f, 16f), minFont, maxFont) else progress
+                if (fromUser && p != progress) seekBar?.progress = p
+                updateFontBitmap(p)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        seekScrollAscii.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val p = if (fromUser) snapProgress(progress, defaultScrollAscii, minScroll, maxScroll) else progress
+                if (fromUser && p != progress) seekBar?.progress = p
+                updateScrollAscii(p)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        seekScrollBitmap.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val p = if (fromUser) snapProgress(progress, defaultScrollBitmap, minScroll, maxScroll) else progress
+                if (fromUser && p != progress) seekBar?.progress = p
+                updateScrollBitmap(p)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        // Place red default markers exactly on the SeekBar track based on default values
+        fun placeMarker(marker: View, seekBar: SeekBar, defaultValue: Float, min: Float, max: Float) {
+            seekBar.post {
+                val trackWidth = seekBar.width - seekBar.paddingStart - seekBar.paddingEnd
+                if (trackWidth <= 0) return@post
+                val ratio = ((defaultValue - min) / (max - min)).coerceIn(0f, 1f)
+                val x = seekBar.paddingStart + ratio * trackWidth
+                val lp = (marker.layoutParams as FrameLayout.LayoutParams)
+                lp.leftMargin = (x - (marker.measuredWidth.takeIf { it > 0 } ?: marker.layoutParams.width) / 2f).toInt()
+                marker.layoutParams = lp
+                marker.requestLayout()
+            }
+        }
+        fun placeMarkerInt(marker: View, seekBar: SeekBar, defaultValue: Int, min: Int, max: Int) {
+            placeMarker(marker, seekBar, defaultValue.toFloat(), min.toFloat(), max.toFloat())
+        }
+        placeMarker(markerFontAscii, seekFontAscii, defaultFontAscii, minFont, maxFont)
+        placeMarker(markerFontBitmap, seekFontBitmap, defaultFontBitmap, minFont, maxFont)
+        placeMarkerInt(markerScrollAscii, seekScrollAscii, defaultScrollAscii, minScroll, maxScroll)
+        placeMarkerInt(markerScrollBitmap, seekScrollBitmap, defaultScrollBitmap, minScroll, maxScroll)
 
         // Audio enable toggle behavior
         val mp = MediaPreferences(this)
@@ -330,60 +578,21 @@ class SettingsActivity : ComponentActivity() {
                 } catch (_: Exception) { openTree.launch(null) }
             }
             updateSafStatus()
+            // Force layout so the section expands/collapses immediately
+            audioSection.requestLayout()
+            // Also ensure list heights inside audio section refresh
+            frontAudioList.updateHeightToContent()
+            backAudioList.updateHeightToContent()
         }
 
         updateSafStatus()
         updateAccessibilityStatus()
         updateAnkiApiStatus()
 
-        // Open SAF
-        btnPickMediaFolder.setOnClickListener {
-            try {
-                val initial: Uri? = runCatching {
-                    DocumentsContract.buildDocumentUri(
-                        "com.android.externalstorage.documents",
-                        "primary:AnkiDroid/collection.media"
-                    )
-                }.getOrNull()
-                openTree.launch(initial)
-            } catch (e: Exception) {
-                Toast.makeText(this, "Unable to open picker: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // Open Accessibility settings
-        btnAccessibility.setOnClickListener {
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(intent)
-        }
-
-        // Request AnkiDroid API permission -> open GlyphAnki app details for additional permissions
-        btnGrantAnkiApi.setOnClickListener {
-            try {
-                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                    data = Uri.parse("package:" + packageName)
-                }
-                startActivity(intent)
-                Toast.makeText(this, "Open GlyphAnki > Autorisations supplémentaires > AnkiDroid API", Toast.LENGTH_LONG).show()
-            } catch (e: Exception) {
-                Toast.makeText(this, "Unable to open app settings: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-
-        // Open AnkiDroid app for convenience
-        btnOpenAnki?.setOnClickListener {
-            try {
-                val intent = packageManager.getLaunchIntentForPackage("com.ichi2.anki")
-                    ?: packageManager.getLaunchIntentForPackage("com.ichi2.anki.debug")
-                if (intent != null) {
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    startActivity(intent)
-                } else {
-                    Toast.makeText(this, "AnkiDroid not installed", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Unable to open AnkiDroid: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
+        // After inserting Display card, recalc list heights to ensure full content is visible
+        frontList.updateHeightToContent()
+        backList.updateHeightToContent()
+        frontAudioList.updateHeightToContent()
+        backAudioList.updateHeightToContent()
     }
 }

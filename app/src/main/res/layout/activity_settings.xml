@@ -389,7 +389,7 @@
                     android:paddingLeft="16dp"
                     android:paddingRight="16dp"
                     android:includeFontPadding="false"
-                    android:text="Open AnkiDroid"
+                    android:text="Grant AnkiDroid DB"
                     android:textAllCaps="false"
                     android:textSize="12sp"
                     android:layout_marginTop="6dp"

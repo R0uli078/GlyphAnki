@@ -56,7 +56,7 @@
 - 💤 First-time Glyph display may be tricky — if it doesn’t work, **lock and delock your screen** or **cycle through your Glyph Toys** to “wake” it up.  
 - 💥 AnkiDroid may occasionally crash — if it happens, do the **first card** of your deck in AnkiDroid, then go back to GlyphAnki or switch to another deck.
 - 📱 GlyphAnki is designed for the new **Nothing Phone (3)** Matrix Glyph.
-- 🔠 The current display size is quite small (3 Sino-Japanese characters fit on the Glyph; beyond that, the text scrolls). I’ll try to add the option to freely increase the font size in future updates.
+- 🔠 There is an option to freely change the font size of Glyph text.
 
 ---
 
@@ -74,5 +74,6 @@ GlyphAnki is licensed under the [GPLv3](./LICENSE).
 
 This project makes use of the [AnkiDroid API](https://github.com/ankidroid/Anki-Android), 
 which is distributed under the GNU Lesser General Public License (LGPL v3), and [GlyphSDK](https://github.com/Nothing-Developer-Programme/GlyphMatrix-Developer-Kit/blob/main/LICENSE.md), which is distributed under the Glyph SDK EULA License.
-"Anki" is a registered trademark of Ankitects Pty Ltd.
+
+GlyphAnki is an independent open-source project and is not affiliated with or endorsed by Anki. "Anki" is a registered trademark of Ankitects Pty Ltd.
 
