@@ -162,9 +162,7 @@
                 <Switch
                     android:id="@+id/toggleAudio"
                     android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:thumbTint="@color/nothing_red"
-                    android:trackTint="#F44336"/>
+                    android:layout_height="wrap_content"/>
             </LinearLayout>
 
             <LinearLayout

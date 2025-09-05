@@ -1,10 +1,7 @@
 package com.alcyon.glyphanki.ui
 
-import android.content.Intent
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import android.text.SpannableString
 import android.text.style.StyleSpan
 import android.text.style.RelativeSizeSpan
@@ -23,6 +20,9 @@ import android.database.DataSetObserver
 import android.view.LayoutInflater
 import android.content.SharedPreferences
 import androidx.core.content.ContextCompat
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 
 class SettingsActivity : ComponentActivity() {
     private var udFace: Typeface? = null
@@ -157,6 +157,10 @@ class SettingsActivity : ComponentActivity() {
 
     private fun ListView.updateHeightToContent() { post { setHeightToWrapContentNow() } }
 
+    private fun ListView.setHeightToWrapContentDelayed(delayMillis: Long) {
+        postDelayed({ setHeightToWrapContentNow() }, delayMillis)
+    }
+
     override fun onResume() {
         super.onResume()
         updateAccessibilityStatus()
@@ -290,6 +294,34 @@ class SettingsActivity : ComponentActivity() {
         frontAudioList.adapter = frontAudioAdapter
         backAudioList.adapter = backAudioAdapter
 
+        // Add button handlers to append new field names
+        fun addUnique(target: MutableList<String>, value: String, adapter: ArrayAdapter<String>, listView: ListView) {
+            val v = value.trim()
+            if (v.isEmpty()) return
+            if (target.none { it.equals(v, ignoreCase = true) }) {
+                target.add(v)
+                adapter.notifyDataSetChanged()
+                listView.updateHeightToContent()
+                save()
+            }
+        }
+        addFront.setOnClickListener {
+            addUnique(fronts, frontInput.text.toString(), frontAdapter, frontList)
+            frontInput.text.clear()
+        }
+        addBack.setOnClickListener {
+            addUnique(backs, backInput.text.toString(), backAdapter, backList)
+            backInput.text.clear()
+        }
+        addFrontAudio.setOnClickListener {
+            addUnique(frontAudios, frontAudioInput.text.toString(), frontAudioAdapter, frontAudioList)
+            frontAudioInput.text.clear()
+        }
+        addBackAudio.setOnClickListener {
+            addUnique(backAudios, backAudioInput.text.toString(), backAudioAdapter, backAudioList)
+            backAudioInput.text.clear()
+        }
+
         // Wire up buttons
         btnAccessibility.setOnClickListener {
             runCatching {
@@ -407,7 +439,7 @@ class SettingsActivity : ComponentActivity() {
         val defaultFontAscii = 10f
         val defaultFontBitmap = 12f
         val defaultScrollAscii = 24
-        val defaultScrollBitmap = 34
+        val defaultScrollBitmap = 30
         val minFont = 6f
         val maxFont = 18f
         val minScroll = 10
@@ -431,6 +463,14 @@ class SettingsActivity : ComponentActivity() {
         val markerFontBitmap = displayCard.findViewById<View>(R.id.markerFontBitmap)
         val markerScrollAscii = displayCard.findViewById<View>(R.id.markerScrollAscii)
         val markerScrollBitmap = displayCard.findViewById<View>(R.id.markerScrollBitmap)
+        val toggleDimScreen = displayCard.findViewById<Switch>(R.id.toggleDimScreen)
+
+        val dimPrefKey = "dim_screen_during_session"
+        val dimEnabled = displayPrefs.getBoolean(dimPrefKey, true)
+        toggleDimScreen.isChecked = dimEnabled
+        toggleDimScreen.setOnCheckedChangeListener { _, isChecked ->
+            displayPrefs.edit().putBoolean(dimPrefKey, isChecked).apply()
+        }
 
         // Style seekbars programmatically for consistency
         listOf(seekFontAscii, seekFontBitmap, seekScrollAscii, seekScrollBitmap).forEach { sb ->

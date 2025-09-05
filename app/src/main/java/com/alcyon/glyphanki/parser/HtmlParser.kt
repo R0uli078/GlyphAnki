@@ -52,46 +52,84 @@ object HtmlParser {
             " [data-sc-content=attribution]," +
             " [data-sc-content=tags], [data-sc-content=tag], [data-sc-content=pos], [data-sc-content=word-class]," +
             " [data-sc-content=label], [data-sc-content=grammar], [data-sc-content=flags]," +
-            " .pos, .tag, .tag-chip, [class*=pos], [class*=tag]"
+            " [data-sc-content=forms]," +
+            " .tag, .tag-chip, [class*=tag]"
         ).remove()
+        // Drop POS chips like <span data-sc-code="n">noun</span>
+        doc.select("[data-sc-code]").remove()
 
-        // POS/label dictionary
+        // Remove known non-gloss sections like forms/reading tables that sometimes come as plain lists/tables
+        run {
+            val headingRe = Regex("(?i)^(forms?|priority\\s*form|special\\s*reading|readings?|conjugations?|inflections?|declensions?|variants?)$")
+            val toRemove = mutableListOf<org.jsoup.nodes.Element>()
+            for (el in doc.select("*")) {
+                val own = el.ownText().trim()
+                if (own.isNotEmpty() && headingRe.matches(own)) {
+                    toRemove += el
+                    el.nextElementSibling()?.let { sib ->
+                        if (sib.tagName() in listOf("ul", "ol", "table", "dl")) toRemove += sib
+                    }
+                }
+            }
+            toRemove.forEach { it.remove() }
+        }
+
+        // POS/label dictionary (expanded)
         val POS_WORDS = setOf(
             "noun", "verb", "adjective", "adverb", "interjection", "conjunction", "pronoun", "preposition", "determiner", "particle",
             "prefix", "suffix", "counter", "auxiliary", "copula",
             // JP-specific markers
             "suru", "transitive", "intransitive", "ichidan", "godan", "na-adjective", "no-adjective", "i-adjective",
+            // numeric dan spelling seen on Jitendex
+            "5-dan",
             // usage/style
-            "polite", "humble", "honorific", "slang", "colloquial", "abbr", "abbreviation", "archaism", "figurative", "idiomatic"
+            "polite", "humble", "honorific", "slang", "colloquial", "abbr", "abbreviation", "archaic", "archaism", "figurative", "idiomatic",
+            // non-gloss labels sometimes inline
+            "priority", "priority form", "special reading", "reading", "form", "forms"
         )
         val posAlternation = POS_WORDS.joinToString("|") { Regex.escape(it) }
         val leadingPosSepRe = Regex("^(?:$posAlternation)(?:[\\s,;/・／-]+(?:$posAlternation))*", RegexOption.IGNORE_CASE)
         val leadingPosConcatRe = Regex("^(?:$posAlternation)+", RegexOption.IGNORE_CASE)
+        val seeAlsoRe = Regex("(?i)^see also\\b.*")
 
         fun dropLeadingPosJargon(s: String): String {
             var t = s.trim()
-            // Remove parentheticals early (e.g., (of buildings))
+            if (t.isEmpty()) return t
+            if (seeAlsoRe.matches(t)) return ""
+            // Preserve qualifiers like "noun〔妻 only〕" at the start:
+            val qualMatch = Regex("^(?:$posAlternation)\\s*[〔\\[][^^〕\\]]+[〕\\]]", RegexOption.IGNORE_CASE).find(t)
+            if (qualMatch != null) {
+                val head = qualMatch.value.trim()
+                val rest = t.substring(qualMatch.range.last + 1).trim()
+                return (head + (if (rest.isNotEmpty()) " " + rest else "")).trim()
+            }
+            // Otherwise strip leading POS chips/words
             t = t.replace("\\([^)]*\\)".toRegex(), " ").trim()
-            // 1) Separated labels at the start (with spaces/commas/slashes/dots/hyphens)
+            // Special-case: numeric dan + transitivity labels merged (e.g., "5-danintransitive")
+            t = t.replace("^(?i)5-dan(?:\\s*|-)?(?:intransitive|transitive)".toRegex(), "").trim()
             t = t.replace(leadingPosSepRe, "").trim()
-            // 2) Concatenated labels like "nounsurutransitive"
             t = t.replace(leadingPosConcatRe, "").trim()
-            // Collapse whitespace
             t = t.replace("\\s+".toRegex(), " ").trim()
             return t
         }
 
-        // Normalize a raw token: drop parentheticals, trim punctuation/space, collapse whitespace
+        // Normalize a raw token
         fun normalizeToken(s: String): String {
             var t = s
-                .replace("\u00A0", " ")
+                .replace('\u00A0', ' ')
                 .replace("\\s+".toRegex(), " ")
                 .trim()
-            // Drop any parenthetical notes like (of buildings)
-            t = t.replace("\\([^)]*\\)".toRegex(), "").trim()
-            // Trim separators we might carry
+            // Drop vendor/date and citations
+            t = t.replace("(?i)\\b(?:jitendex\\.org|jitendex|jmdict|tatoeba)\\b.*$".toRegex(), " ")
+            // Keep Japanese corner-bracket notes 〔...〕 and […], but drop date stamps and stars in brackets
+            t = t.replace("\\[(?:\u2605|\\*).*?]".toRegex(), " ") // [★...] or [*...]
+            t = t.replace("\\[\\d{4}-\\d{2}-\\d{2}]".toRegex(), " ") // [YYYY-MM-DD]
+            // Drop round parentheticals like (of buildings)
+            t = t.replace("\\([^)]*\\)".toRegex(), " ").trim()
+            // Drop trailing footnote refs like [1], [2]
+            t = t.replace("\\[\\d+]".toRegex(), " ")
+            // Trim punctuation and slashes
             t = t.trim(' ', ',', ';', ':', '-', '·', '•', '/', '\\')
-            // Collapse again
             t = t.replace("\\s+".toRegex(), " ").trim()
             return t
         }
@@ -103,7 +141,6 @@ object HtmlParser {
             return words.all { it in POS_WORDS }
         }
 
-        // Split a candidate into atomic glosses
         fun splitIntoGlosses(token: String): List<String> {
             if (token.isBlank()) return emptyList()
             val primary = token.split("|", ",", ";", "／", "/", "・", "、", " and ", " or ")
@@ -112,7 +149,6 @@ object HtmlParser {
                 .toMutableList()
             val out = mutableListOf<String>()
             for (p in primary) {
-                // Heuristic: if exactly two long words with a single space, split them
                 val m = "^([A-Za-z]{4,}) ([A-Za-z]{4,})$".toRegex().matchEntire(p)
                 if (m != null) {
                     out += m.groupValues[1]
@@ -126,54 +162,54 @@ object HtmlParser {
 
         val out = linkedSetOf<String>()
 
-        // Pattern A: JMdict/AnkiWeb: take the text from .dict-group__glossary within each top <li>
+        // Pattern A: JMdict/AnkiWeb/Jitendex group: take first item of each glossary list within .dict-group__glossary
         val topLis = doc.select("ol > li")
         if (topLis.isNotEmpty()) {
             for (li in topLis) {
                 val glossEl = li.selectFirst(".dict-group__glossary")
                 if (glossEl != null) {
-                    val raw = glossEl.text()
-                    if (raw.isNotBlank()) {
-                        val head = dropLeadingPosJargon(normalizeToken(raw))
-                        splitIntoGlosses(head).forEach { g -> if (!isPosJargon(g)) out += g }
+                    val lists = glossEl.select("ul[data-sc-content=glossary]")
+                    if (lists.isNotEmpty()) {
+                        for (ul in lists) {
+                            val first = ul.selectFirst("> li")?.text()?.let { normalizeToken(it) } ?: continue
+                            val token = dropLeadingPosJargon(first)
+                            if (token.isNotBlank()) out += token
+                        }
+                    } else {
+                        // Fallback: old behavior, but will later keep only ASCII-letter tokens
+                        val raw = glossEl.text()
+                        if (raw.isNotBlank()) {
+                            val head = dropLeadingPosJargon(normalizeToken(raw))
+                            // Keep only the first gloss from the split for this group
+                            val first = splitIntoGlosses(head).firstOrNull()
+                            if (first != null && !isPosJargon(first)) out += first
+                        }
                     }
                 }
             }
         }
 
-        // Pattern B: Jitendex-like: gather items from glossary lists
+        // Pattern B: Jitendex-like: gather first LI of each glossary UL
         val glossaryLists = doc.select("ul[data-sc-content=glossary]")
         if (glossaryLists.isNotEmpty()) {
             for (ul in glossaryLists) {
-                val lis = ul.select("> li")
-                for (li in lis) {
-                    val candidates = li.select("[data-sc-content=gloss], .gloss")
-                    if (candidates.isNotEmpty()) {
-                        for (el in candidates) {
-                            val token = dropLeadingPosJargon(normalizeToken(el.text()))
-                            splitIntoGlosses(token).forEach { g -> if (!isPosJargon(g)) out += g }
-                        }
-                    } else {
-                        val cleaned = li.clone()
-                        cleaned.select("[data-sc-content=tags], [data-sc-content=pos], [data-sc-content=word-class], .pos, .tag, .tag-chip, [class*=pos], [class*=tag]").remove()
-                        val raw = cleaned.text()
-                        val token = dropLeadingPosJargon(normalizeToken(raw))
-                        splitIntoGlosses(token).forEach { g -> if (!isPosJargon(g)) out += g }
-                    }
-                }
+                val first = ul.selectFirst("> li")?.text() ?: continue
+                val token = dropLeadingPosJargon(normalizeToken(first))
+                if (token.isNotBlank() && !isPosJargon(token)) out += token
             }
         }
 
-        // Final cleanup: drop empties, dedupe, and short garbage
+        // Final cleanup: drop empties, dedupe, and short garbage; keep only tokens with ASCII letters to avoid JP forms tables
         val final = out.map { normalizeToken(it) }
-            .filter { it.isNotBlank() && it.any { ch -> ch.isLetter() } }
+            .filter { it.isNotBlank() && it.contains(Regex("[A-Za-z]")) && !seeAlsoRe.matches(it) }
+            .toList()
 
         if (final.isNotEmpty()) return final.joinToString(", ")
 
         // Fallbacks
         val simplified = extractSimplifiedDefinition(html)
         val head = dropLeadingPosJargon(simplified)
-        val parts = splitIntoGlosses(head).filter { it.isNotBlank() && !isPosJargon(it) }
+        val parts = splitIntoGlosses(head).filter { it.isNotBlank() && !isPosJargon(it) && it.contains(Regex("[A-Za-z]")) }
         if (parts.isNotEmpty()) return parts.joinToString(", ")
         return simplified.take(120).trim()
     }

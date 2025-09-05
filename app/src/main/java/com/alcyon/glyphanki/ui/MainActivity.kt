@@ -45,6 +45,8 @@ import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import android.content.BroadcastReceiver
 import android.content.IntentFilter
 import android.content.Context
+import android.view.WindowManager
+import com.alcyon.glyphanki.session.ReviewSessionState
 
 class MainActivity : ComponentActivity() {
 
@@ -88,15 +90,50 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private var dimApplied = false
+    private var originalWindowBrightness: Float? = null
+
+    private fun applyWindowDimIfEnabled() {
+        val enabled = getSharedPreferences("display_prefs", MODE_PRIVATE)
+            .getBoolean("dim_screen_during_session", true)
+        if (!enabled || dimApplied) return
+        try {
+            val w = window
+            if (originalWindowBrightness == null) originalWindowBrightness = w.attributes.screenBrightness
+            w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            val lp = w.attributes
+            lp.screenBrightness = 0.01f
+            w.attributes = lp
+            dimApplied = true
+        } catch (_: Throwable) {}
+    }
+
+    private fun clearWindowDim() {
+        if (!dimApplied) return
+        try {
+            val w = window
+            val lp = w.attributes
+            lp.screenBrightness = originalWindowBrightness ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+            w.attributes = lp
+            w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } catch (_: Throwable) {}
+        originalWindowBrightness = null
+        dimApplied = false
+    }
+
     private val serviceStatusReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             if (intent.action == com.alcyon.glyphanki.service.ReviewForegroundService.BROADCAST_ACTION) {
                 val status = intent.getStringExtra(com.alcyon.glyphanki.service.ReviewForegroundService.EXTRA_STATUS)
                 when (status) {
-                    com.alcyon.glyphanki.service.ReviewForegroundService.STATUS_STARTED ->
+                    com.alcyon.glyphanki.service.ReviewForegroundService.STATUS_STARTED -> {
                         showUiMsg(UiMsg.STARTED, "Review session started")
-                    com.alcyon.glyphanki.service.ReviewForegroundService.STATUS_STOPPED ->
+                        applyWindowDimIfEnabled()
+                    }
+                    com.alcyon.glyphanki.service.ReviewForegroundService.STATUS_STOPPED -> {
                         showUiMsg(UiMsg.STOPPED, "Service stopped")
+                        clearWindowDim()
+                    }
                 }
             }
         }
@@ -109,10 +146,16 @@ class MainActivity : ComponentActivity() {
             IntentFilter(com.alcyon.glyphanki.service.ReviewForegroundService.BROADCAST_ACTION)
         )
         warmGlyphIfNeeded()
+        // If a session is already active when returning to the activity, re-apply dim
+        if (ReviewSessionState.active) {
+            applyWindowDimIfEnabled()
+        }
     }
 
     override fun onStop() {
         LocalBroadcastManager.getInstance(this).unregisterReceiver(serviceStatusReceiver)
+        // When leaving the activity, clear brightness override to avoid leaking it if session stops later.
+        clearWindowDim()
         super.onStop()
     }
 

@@ -15,6 +15,7 @@ import com.alcyon.glyphanki.session.ReviewEngine
 import com.alcyon.glyphanki.session.ReviewSessionState
 import kotlinx.coroutines.*
 import java.util.*
+import android.os.PowerManager
 
 /**
  * Service that manages review sessions and AnkiDroid data loading (no notifications).
@@ -81,6 +82,8 @@ class ReviewForegroundService : Service() {
 
     // Periodic lightweight refresh to keep AnkiDroid scheduler/counts up-to-date during a session
     private var refreshTickerJob: Job? = null
+
+    private var screenDimWakeLock: PowerManager.WakeLock? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -158,6 +161,37 @@ class ReviewForegroundService : Service() {
         super.onDestroy()
     }
 
+    private fun applyScreenPolicyActiveIfEnabled() {
+        try {
+            val prefs = getSharedPreferences("display_prefs", Context.MODE_PRIVATE)
+            val enabled = prefs.getBoolean("dim_screen_during_session", true)
+            if (!enabled) return
+            if (screenDimWakeLock?.isHeld == true) return
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            @Suppress("DEPRECATION")
+            val wl = pm.newWakeLock(PowerManager.SCREEN_DIM_WAKE_LOCK, "GlyphAnki:ReviewDim")
+            wl.setReferenceCounted(false)
+            wl.acquire()
+            screenDimWakeLock = wl
+            Log.d(TAG, "SCREEN_DIM wake lock acquired")
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to acquire SCREEN_DIM wake lock", t)
+        }
+    }
+
+    private fun clearScreenPolicy() {
+        try {
+            screenDimWakeLock?.let { wl ->
+                if (wl.isHeld) wl.release()
+                Log.d(TAG, "SCREEN_DIM wake lock released")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to release SCREEN_DIM wake lock", t)
+        } finally {
+            screenDimWakeLock = null
+        }
+    }
+
     private fun stopCurrentSession(reason: String) {
         try {
             reviewEngine?.stopSession()
@@ -167,6 +201,7 @@ class ReviewForegroundService : Service() {
             // Stop periodic refresh ticker
             try { refreshTickerJob?.cancel() } catch (_: Throwable) {}
             refreshTickerJob = null
+            clearScreenPolicy()
             serviceScope.cancel()
             serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
             ReviewSessionState.clear()
@@ -281,6 +316,7 @@ class ReviewForegroundService : Service() {
             var lastGradedId: Long? = null
             var lastShownId: Long? = null
             var lastGradeAtMs: Long = 0L
+            var lastEaseWasAgain: Boolean = false
             // Blocklist for sids that should not be immediately repeated (sid = noteId<<8 | ord)
             val blockedUntil: MutableMap<Long, Long> = mutableMapOf()
             // Recent history (count-based, not time-based) to avoid ping-pong between 2 cards
@@ -369,8 +405,10 @@ class ReviewForegroundService : Service() {
 
                         val avoidSet = HashSet<Long>().apply {
                             lastFailedId?.let { add(it) }
-                            lastShownId?.let { add(it) }
-                            lastGradedId?.let { add(it) }
+                            if (!lastEaseWasAgain) {
+                                lastShownId?.let { add(it) }
+                                lastGradedId?.let { add(it) }
+                            }
                             addAll(recentSids)
                             addAll(gradedSids)
                         }
@@ -427,14 +465,18 @@ class ReviewForegroundService : Service() {
                 withContext(Dispatchers.IO) {
                     val ok = ankiRepository.answerCard(card.noteId, card.cardOrd, ease, timeTaken)
                     Log.d(TAG, "answerFunction: ok=$ok for ${card.noteId}:${card.cardOrd} ease=$ease t=$timeTaken in ${System.currentTimeMillis() - t0}ms")
-                    // Always trigger a strong invalidation so next fetch sees the scheduler advance
                     needRefresh = true
                     val sid = (card.noteId shl 8) or (card.cardOrd.toLong() and 0xFF)
                     if (ok) {
                         lastGradedId = sid
                         lastGradeAtMs = System.currentTimeMillis()
-                        gradedSids.add(sid)
-                        // Force a deck-select + refresh and schedule query after a successful answer
+                        lastEaseWasAgain = ease <= 1
+                        if (ease > 1) {
+                            gradedSids.add(sid)
+                        } else {
+                            reviewEngine?.markRecentAgain(90_000L)
+                            recentSids.removeIf { it == sid }
+                        }
                         runCatching { ankiRepository.selectDeck(deckId) }
                         runCatching { ankiRepository.hardInvalidateProviderCaches(deckId) }
                         runCatching { ankiRepository.forceSyncRefresh() }
@@ -445,6 +487,9 @@ class ReviewForegroundService : Service() {
                     ok
                 }
             }
+
+            // Apply screen policy (keep on dim via wake lock). Window-level dim handled by Activity.
+            applyScreenPolicyActiveIfEnabled()
 
             reviewEngine?.startSession(smartLoader, answerFunction, enableBackAutoAdvance)
             ReviewSessionState.setActive(deckId)

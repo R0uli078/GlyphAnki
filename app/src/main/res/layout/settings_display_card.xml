@@ -208,4 +208,31 @@
             android:textSize="12sp"
             android:layout_marginStart="8dp"/>
     </LinearLayout>
+
+    <TextView
+        android:id="@+id/labelScreenBehavior"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Screen"
+        android:textColor="@color/nothing_fg_dim"
+        android:textSize="13sp"
+        android:layout_marginTop="16dp"/>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Keep screen on (dim) during session"
+            android:textColor="@color/nothing_fg"
+            android:textSize="12sp"/>
+        <Switch
+            android:id="@+id/toggleDimScreen"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"/>
+    </LinearLayout>
 </LinearLayout>

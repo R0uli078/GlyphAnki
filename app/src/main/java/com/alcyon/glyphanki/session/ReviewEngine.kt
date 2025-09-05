@@ -11,9 +11,12 @@ import com.alcyon.glyphanki.audio.AudioPlayer
 import com.alcyon.glyphanki.parser.HtmlParser
 import kotlinx.coroutines.*
 import com.alcyon.glyphanki.prefs.MediaPreferences
+import android.content.Intent
+import com.alcyon.glyphanki.service.ReviewForegroundService
+import android.app.Activity
+import android.view.WindowManager
 
 class ReviewEngine(private val context: Context) {
-    
     companion object {
         private const val TAG = "ReviewEngine"
     }
@@ -39,7 +42,48 @@ class ReviewEngine(private val context: Context) {
     private var enableBackAutoAdvance = false
     private var stallAttempts: Int = 0
     private var consecutiveEmpty: Int = 0
-    
+    private var recentAgainUntilMs: Long = 0L
+    private var endDisplayedAtMs: Long = 0L
+    private var originalDimAmount: Float? = null
+
+    private fun applyScreenPolicyActive() {
+        try {
+            val prefs = context.getSharedPreferences("display_prefs", Context.MODE_PRIVATE)
+            val enabled = prefs.getBoolean("dim_screen_during_session", true)
+            if (!enabled) return
+            // We cannot directly access an Activity window from Service; use system flags on application window if available
+            if (context is Activity) {
+                val w = context.window
+                originalDimAmount = w.attributes.screenBrightness
+                w.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                val lp = w.attributes
+                lp.screenBrightness = 0.01f // minimum brightness
+                w.attributes = lp
+            } else {
+                // Best-effort: keep CPU/screen on via system flag if a visible Activity attaches later
+                // No-op here; Activity should re-apply on resume if needed
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "applyScreenPolicyActive failed", t)
+        }
+    }
+
+    private fun clearScreenPolicy() {
+        try {
+            if (context is Activity) {
+                val w = context.window
+                val lp = w.attributes
+                lp.screenBrightness = originalDimAmount ?: WindowManager.LayoutParams.BRIGHTNESS_OVERRIDE_NONE
+                w.attributes = lp
+                w.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "clearScreenPolicy failed", t)
+        } finally {
+            originalDimAmount = null
+        }
+    }
+
     fun startSession(
         loader: suspend () -> AnkiCard?,
         answerer: suspend (AnkiCard, Int, Long) -> Boolean,
@@ -49,6 +93,7 @@ class ReviewEngine(private val context: Context) {
         answerFunction = answerer
         enableBackAutoAdvance = autoAdvanceBack
         
+        applyScreenPolicyActive()
         scope.launch {
             loadNextCard()
         }
@@ -59,6 +104,7 @@ class ReviewEngine(private val context: Context) {
         scope.cancel()
         glyphController.release()
         audio.release()
+        clearScreenPolicy()
         ReviewSessionState.clear()
     }
     
@@ -133,6 +179,21 @@ class ReviewEngine(private val context: Context) {
         }
     }
     
+    fun markRecentAgain(windowMs: Long = 20000L) {
+        recentAgainUntilMs = System.currentTimeMillis() + windowMs
+    }
+
+    private fun requestStopService() {
+        try {
+            clearScreenPolicy()
+            val i = Intent(context, ReviewForegroundService::class.java)
+            i.putExtra("action", ReviewForegroundService.ACTION_STOP)
+            context.startService(i)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Failed to request service stop", t)
+        }
+    }
+
     private suspend fun loadNextCard() {
         try {
             phase = Phase.TRANSITION
@@ -143,6 +204,7 @@ class ReviewEngine(private val context: Context) {
             if (nextCard != null) {
                 stallAttempts = 0
                 consecutiveEmpty = 0
+                endDisplayedAtMs = 0L
                 withContext(Dispatchers.Main) {
                     currentCard = nextCard
                     showFront(nextCard)
@@ -150,20 +212,25 @@ class ReviewEngine(private val context: Context) {
             } else {
                 consecutiveEmpty++
                 Log.d(TAG, "No more cards available (loader returned null) consecutiveEmpty=$consecutiveEmpty")
-                if (consecutiveEmpty >= 2) {
-                    Log.d(TAG, "No cards twice in a row -> End")
+                val now = System.currentTimeMillis()
+                val withinAgainWindow = now < recentAgainUntilMs
+                if (consecutiveEmpty >= 2 && !withinAgainWindow) {
+                    Log.d(TAG, "No cards twice and not within AGAIN window -> End")
                     withContext(Dispatchers.Main) { glyphController.displaySmart("End") }
+                    endDisplayedAtMs = System.currentTimeMillis()
+                    // Auto-stop after 10 seconds if still at End
+                    mainHandler.postDelayed({
+                        val shownFor = System.currentTimeMillis() - endDisplayedAtMs
+                        if (endDisplayedAtMs != 0L && shownFor >= 10_000L) {
+                            Log.d(TAG, "Auto-stopping session after End shown for ${'$'}shownFor ms")
+                            requestStopService()
+                        }
+                    }, 10_000L)
                     return
                 }
                 withContext(Dispatchers.Main) { glyphController.displaySmart("Refreshing…") }
-                stallAttempts++
-                if (stallAttempts <= 25) { // lower to reduce useless loops
-                    // Immediate retry for fluidity
-                    loadNextCard()
-                } else {
-                    Log.w(TAG, "No cards after $stallAttempts attempts; showing End")
-                    withContext(Dispatchers.Main) { glyphController.displaySmart("End") }
-                }
+                delay(if (withinAgainWindow) 1200 else 400)
+                loadNextCard()
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error loading next card", e)
