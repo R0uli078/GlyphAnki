@@ -12,14 +12,16 @@
 
 ## 📸 Preview  
 
-> ![24575](https://github.com/user-attachments/assets/fd5276a3-36fc-4c43-b89e-3ae0aa1099b2)
+> <img src="https://github.com/user-attachments/assets/3bba02e9-825e-4e10-ab0d-06b68f1d243d" style="position:relative; padding-right:20px;" width="300" alt="GlyphAnki" />
+> <img src="https://via.placeholder.com/220x150/ffffff/ffffff?text=+" width="60" height="0" style="display:block;" alt=""/>
+> <img src="https://github.com/user-attachments/assets/fd5276a3-36fc-4c43-b89e-3ae0aa1099b2" style="position:relative" width="400" alt="24575"/>
 
 
 ---
 
 ## 🚀 Features  
 
-- 🔼 **Volume buttons navigation**  
+- 🔼 **Volume buttons navigation**
 - 💬 **Custom text display** on the Glyph  
 - 🎧 **Audio playback** for your cards (optional)
 - 📝 **HtmlParser** for full support of HTML cards
@@ -68,7 +70,7 @@ I’m not a developer — this is mainly a **personal project**.
 
 ---
 
-## License
+## 📋 License
 
 GlyphAnki is licensed under the [GPLv3](./LICENSE).
 
